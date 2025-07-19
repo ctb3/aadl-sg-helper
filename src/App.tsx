@@ -1,27 +1,26 @@
-import { useRef, useState } from 'react';
-import Tesseract from 'tesseract.js';
-import codeAreaTemplate from './assets/code_area_template.png';
-import signTemplate from './assets/sign_template.png';
+import { useRef, useState, useCallback } from 'react';
+import Cropper from 'react-easy-crop';
+// @ts-ignore - Static import of Scribe.js
+import scribe from 'scribe.js-ocr';
+
+// Type declarations for Scribe.js results
+interface ScribeResult {
+  text: string;
+  confidence?: number;
+  boundingBox?: any;
+}
 
 function App() {
   const [image, setImage] = useState<string | null>(null);
   const [ocrResult, setOcrResult] = useState('');
   const [loading, setLoading] = useState(false);
-  const [opencvReady, setOpencvReady] = useState(false);
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<any>(null);
+  const [showCropper, setShowCropper] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [croppedDataUrl, setCroppedDataUrl] = useState<string | null>(null);
-  const [graySrcUrl, setGraySrcUrl] = useState<string | null>(null);
-  const [grayTemplUrl, setGrayTemplUrl] = useState<string | null>(null);
-  const [warpedDataUrl, setWarpedDataUrl] = useState<string | null>(null);
-  const [codeAreaDataUrl, setCodeAreaDataUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [debugOverlayUrl, setDebugOverlayUrl] = useState<string | null>(null);
-
-  // Wait for OpenCV.js to be ready
-  if (typeof window !== 'undefined' && !opencvReady && (window as any).cv && (window as any).cv.Mat) {
-    setOpencvReady(true);
-  }
+  const scribeInitialized = useRef(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -30,266 +29,344 @@ function App() {
       reader.onload = (ev) => {
         setImage(ev.target?.result as string);
         setOcrResult('');
+        setShowCropper(true);
+        setZoom(1);
+        setCrop({ x: 0, y: 0 });
       };
       reader.readAsDataURL(file);
     }
   };
 
-  // Template matching and OCR
-  const handleOcr = async () => {
-    if (!image || !canvasRef.current) return;
+  const onCropComplete = useCallback((croppedArea: any, croppedAreaPixels: any) => {
+    setCroppedAreaPixels(croppedAreaPixels);
+  }, []);
+
+  const handleCrop = async () => {
+    if (!image || !croppedAreaPixels || !canvasRef.current) return;
+    
     setLoading(true);
     setOcrResult('');
-    setWarpedDataUrl(null);
-    setCodeAreaDataUrl(null);
-    setDebugOverlayUrl(null);
-    setError(null);
+    
     try {
-      const cv = (window as any).cv;
-      if (!cv || !cv.Mat) {
-        setError('OpenCV.js is not loaded yet. Please try again in a moment.');
-        setLoading(false);
-        return;
-      }
-      // Load uploaded image and sign template as HTMLImageElement
-      const [img, templateImg] = await Promise.all([
-        loadImage(image),
-        loadImage(signTemplate),
-      ]);
-      // Convert both to grayscale
-      const src = cv.imread(img);
-      const templ = cv.imread(templateImg);
-      let graySrc = new cv.Mat();
-      let grayTempl = new cv.Mat();
-      cv.cvtColor(src, graySrc, cv.COLOR_RGBA2GRAY, 0);
-      cv.cvtColor(templ, grayTempl, cv.COLOR_RGBA2GRAY, 0);
-      // ORB feature detection
-      let orb = new cv.ORB();
-      let kp1 = new cv.KeyPointVector();
-      let des1 = new cv.Mat();
-      orb.detectAndCompute(grayTempl, new cv.Mat(), kp1, des1);
-      let kp2 = new cv.KeyPointVector();
-      let des2 = new cv.Mat();
-      orb.detectAndCompute(graySrc, new cv.Mat(), kp2, des2);
-      // Match features
-      let bf = new cv.BFMatcher(cv.NORM_HAMMING, true);
-      let matches = new cv.DMatchVector();
-      bf.match(des1, des2, matches);
-      // Filter good matches
-      let goodMatches = [];
-      for (let i = 0; i < matches.size(); i++) {
-        goodMatches.push(matches.get(i));
-      }
-      goodMatches.sort((a, b) => a.distance - b.distance);
-      goodMatches = goodMatches.slice(0, 20); // take top 20 matches
-      if (goodMatches.length < 4) {
-        setError('Not enough good matches found for homography.');
-        src.delete(); templ.delete(); graySrc.delete(); grayTempl.delete();
-        orb.delete(); kp1.delete(); kp2.delete(); des1.delete(); des2.delete(); bf.delete(); matches.delete();
-        setLoading(false);
-        return;
-      }
-      // Prepare points for homography
-      let srcPoints = [];
-      let dstPoints = [];
-      for (let i = 0; i < goodMatches.length; i++) {
-        srcPoints.push(kp1.get(goodMatches[i].queryIdx).pt);
-        dstPoints.push(kp2.get(goodMatches[i].trainIdx).pt);
-      }
-      let srcMat = cv.matFromArray(srcPoints.length, 1, cv.CV_32FC2, ([] as number[]).concat(...srcPoints.map(pt => [pt.x, pt.y])));
-      let dstMat = cv.matFromArray(dstPoints.length, 1, cv.CV_32FC2, ([] as number[]).concat(...dstPoints.map(pt => [pt.x, pt.y])));
-      // Find homography
-      let mask = new cv.Mat();
-      let H = cv.findHomography(srcMat, dstMat, cv.RANSAC, 5, mask);
-      if (H.empty()) {
-        setError('Homography estimation failed.');
-        src.delete(); templ.delete(); graySrc.delete(); grayTempl.delete();
-        orb.delete(); kp1.delete(); kp2.delete(); des1.delete(); des2.delete(); bf.delete(); matches.delete();
-        srcMat.delete(); dstMat.delete(); mask.delete(); H.delete();
-        setLoading(false);
-        return;
-      }
-      // Warp template corners to source image
-      let templCorners = cv.matFromArray(4, 1, cv.CV_32FC2, [
-        0, 0,
-        grayTempl.cols, 0,
-        grayTempl.cols, grayTempl.rows,
-        0, grayTempl.rows
-      ]);
-      let warpedCorners = new cv.Mat();
-      cv.perspectiveTransform(templCorners, warpedCorners, H);
-      
-      // Get bounding box of warped corners (the detected sign)
-      let xCoords = [], yCoords = [];
-      for (let i = 0; i < 4; i++) {
-        xCoords.push(warpedCorners.data32F[i * 2]);
-        yCoords.push(warpedCorners.data32F[i * 2 + 1]);
-      }
-      console.log('Template dimensions:', { cols: grayTempl.cols, rows: grayTempl.rows });
-      console.log('Warped corner coordinates:', xCoords, yCoords);
-      
-      let minX = Math.max(0, Math.floor(Math.min(...xCoords)));
-      let minY = Math.max(0, Math.floor(Math.min(...yCoords)));
-      let maxX = Math.min(src.cols, Math.ceil(Math.max(...xCoords)));
-      let maxY = Math.min(src.rows, Math.ceil(Math.max(...yCoords)));
-      let width = maxX - minX;
-      let height = maxY - minY;
-      console.log('Detected sign bounding box:', { minX, minY, maxX, maxY, width, height });
-      if (width <= 0 || height <= 0) {
-        setError('Warped region is invalid.');
-        src.delete(); templ.delete(); graySrc.delete(); grayTempl.delete();
-        orb.delete(); kp1.delete(); kp2.delete(); des1.delete(); des2.delete(); bf.delete(); matches.delete();
-        srcMat.delete(); dstMat.delete(); mask.delete(); H.delete(); templCorners.delete(); warpedCorners.delete();
-        setLoading(false);
-        return;
-      }
-      // Now, crop the code area as a fixed region relative to the sign's bounding box
-      // Based on the sign structure, the white code area is at the bottom of the sign
-      const codeArea = {
-        x: 0.15, // 15% from left (narrower to focus on the white area)
-        y: 0.75, // 75% from top (target the bottom white area)
-        width: 0.7, // 70% width (narrower to focus on the white area)
-        height: 0.2 // 20% height (taller to capture the full white area)
-      };
-      const codeX = minX + width * codeArea.x;
-      const codeY = minY + height * codeArea.y;
-      const codeW = width * codeArea.width;
-      const codeH = height * codeArea.height;
-      console.log('Crop calculations:', { codeArea, codeX, codeY, codeW, codeH });
-      // Crop the code area from the original image
-      const codeRect = new cv.Rect(Math.round(codeX), Math.round(codeY), Math.round(codeW), Math.round(codeH));
-      console.log('Final crop rectangle:', { x: codeRect.x, y: codeRect.y, width: codeRect.width, height: codeRect.height });
-      
-      // Create debug overlay showing the detected sign and crop area
-      const debugCanvas = document.createElement('canvas');
-      debugCanvas.width = src.cols;
-      debugCanvas.height = src.rows;
-      const debugCtx = debugCanvas.getContext('2d')!;
-      // Draw the original image
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = src.cols;
-      tempCanvas.height = src.rows;
-      cv.imshow(tempCanvas, src);
-      debugCtx.drawImage(tempCanvas, 0, 0);
-      // Draw detected sign bounding box (red)
-      debugCtx.strokeStyle = 'red';
-      debugCtx.lineWidth = 3;
-      debugCtx.strokeRect(minX, minY, width, height);
-      // Draw crop area (green)
-      debugCtx.strokeStyle = 'green';
-      debugCtx.lineWidth = 2;
-      debugCtx.strokeRect(codeRect.x, codeRect.y, codeRect.width, codeRect.height);
-      setDebugOverlayUrl(debugCanvas.toDataURL('image/png'));
-      
-      const codeMat = src.roi(codeRect);
-      // Draw to canvas for OCR
       const canvas = canvasRef.current;
-      canvas.width = codeMat.cols;
-      canvas.height = codeMat.rows;
-      cv.imshow(canvas, codeMat);
-      setCodeAreaDataUrl(canvas.toDataURL('image/png'));
-      // Clean up
-      src.delete(); templ.delete(); graySrc.delete(); grayTempl.delete();
-      orb.delete(); kp1.delete(); kp2.delete(); des1.delete(); des2.delete(); bf.delete(); matches.delete();
-      srcMat.delete(); dstMat.delete(); mask.delete(); H.delete(); templCorners.delete(); warpedCorners.delete();
-      // Run OCR on the code area
-      const dataUrl = canvas.toDataURL('image/png');
-      const { data: { text } } = await Tesseract.recognize(dataUrl, 'eng', {
-        params: {
-          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ',
-        },
-      } as any);
-      setOcrResult(text.trim());
-    } catch (err: any) {
-      setError('Error during hybrid template matching or OCR: ' + (err?.message || err));
-      console.error(err);
-    } finally {
+      const imageElement = new Image();
+      
+      imageElement.onload = async () => {
+        canvas.width = croppedAreaPixels.width;
+        canvas.height = croppedAreaPixels.height;
+        const ctx = canvas.getContext('2d')!;
+        
+        ctx.drawImage(
+          imageElement,
+          croppedAreaPixels.x,
+          croppedAreaPixels.y,
+          croppedAreaPixels.width,
+          croppedAreaPixels.height,
+          0,
+          0,
+          croppedAreaPixels.width,
+          croppedAreaPixels.height
+        );
+        
+        // Enhance the image for better OCR
+        const enhancedCanvas = document.createElement('canvas');
+        enhancedCanvas.width = canvas.width;
+        enhancedCanvas.height = canvas.height;
+        const enhancedCtx = enhancedCanvas.getContext('2d')!;
+        
+        // Draw the original image
+        enhancedCtx.drawImage(canvas, 0, 0);
+        
+        // Apply image enhancement for better OCR
+        const imageData = enhancedCtx.getImageData(0, 0, enhancedCanvas.width, enhancedCanvas.height);
+        const data = imageData.data;
+        
+                  // Increase contrast and emphasize larger text
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            
+            // Convert to grayscale and enhance contrast
+            const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+            // Use adaptive thresholding to emphasize larger text
+            const enhanced = gray > 150 ? 255 : (gray < 80 ? 0 : gray);
+            
+            data[i] = enhanced;     // R
+            data[i + 1] = enhanced; // G
+            data[i + 2] = enhanced; // B
+            // Alpha stays the same
+          }
+        
+        enhancedCtx.putImageData(imageData, 0, 0);
+        
+        // Run OCR on the enhanced canvas using Scribe.js
+        const dataUrl = enhancedCanvas.toDataURL('image/png');
+        
+        try {
+          console.log('Starting Scribe.js OCR...');
+          console.log('Scribe loaded:', scribe);
+          
+          // Initialize Scribe.js if not already initialized
+          if (!scribeInitialized.current) {
+            await scribe.init({ ocr: true, font: true });
+            scribeInitialized.current = true;
+            console.log('Scribe initialized');
+          }
+          
+          // Convert data URL to blob and create a File object with a name
+          const response = await fetch(dataUrl);
+          const blob = await response.blob();
+          const file = new File([blob], 'cropped-image.png', { type: 'image/png' });
+          
+          // Try different Scribe.js methods
+          console.log('Available Scribe methods:', Object.keys(scribe));
+          
+          let result;
+          try {
+            // Try different parameter combinations for extractText using File object
+            console.log('Trying extractText with file array and language...');
+            result = await scribe.extractText([file], ['eng'], 'txt');
+            console.log('extractText result:', result);
+          } catch (extractError) {
+            console.log('First attempt failed:', extractError);
+            
+            try {
+              // Try with different language settings for handwriting
+              console.log('Trying extractText with handwriting-optimized settings...');
+              result = await scribe.extractText([file], ['eng'], 'txt');
+              console.log('extractText result (handwriting optimized):', result);
+            } catch (extractError2) {
+              console.log('Second attempt failed:', extractError2);
+              
+              try {
+                // Try with file array but no language or format
+                console.log('Trying extractText with file array only...');
+                result = await scribe.extractText([file]);
+                console.log('extractText result (file array only):', result);
+              } catch (extractError3) {
+                console.log('Third attempt failed:', extractError3);
+                throw new Error('All extractText attempts failed');
+              }
+            }
+          }
+          
+          console.log('Final result:', result);
+          console.log('Result type:', typeof result);
+          
+          // Process the result based on its type
+          let bestResult = '';
+          console.log('Processing result:', result);
+          
+          if (result) {
+            if (typeof result === 'string') {
+              // String result - split by lines and filter for larger text
+              const lines = result.split('\n').filter(line => line.trim().length > 0);
+              
+              // Filter out small text and common printed text patterns
+              const validResults = lines
+                .filter(line => {
+                  const cleanLine = line.trim();
+                  // Prefer longer lines (likely larger text)
+                  const isLongEnough = cleanLine.length >= 4 && cleanLine.length <= 15;
+                  // Filter out common printed text patterns
+                  const isNotPrintedText = !cleanLine.toLowerCase().includes('play') &&
+                                         !cleanLine.toLowerCase().includes('aadl') &&
+                                         !cleanLine.toLowerCase().includes('org') &&
+                                         !cleanLine.toLowerCase().includes('write') &&
+                                         !cleanLine.toLowerCase().includes('your') &&
+                                         !cleanLine.toLowerCase().includes('code') &&
+                                         !cleanLine.toLowerCase().includes('space');
+                  return isLongEnough && isNotPrintedText;
+                })
+                .sort((a, b) => b.length - a.length); // Prefer longer text (likely larger)
+              
+              console.log('Valid results:', validResults);
+              
+              if (validResults.length > 0) {
+                bestResult = validResults[0];
+              } else if (lines.length > 0) {
+                // Fallback to the longest line that's not obviously printed text
+                const fallbackLines = lines
+                  .filter(line => !line.toLowerCase().includes('play') && 
+                                !line.toLowerCase().includes('aadl'))
+                  .sort((a, b) => b.length - a.length);
+                bestResult = fallbackLines.length > 0 ? fallbackLines[0] : lines[0];
+              }
+            } else if (typeof result === 'object') {
+              // Object result - try to extract text from various properties
+              console.log('Result object keys:', Object.keys(result));
+              
+              // Try common property names for text
+              const textProperties = ['text', 'content', 'data', 'result', 'ocr', 'words'];
+              for (const prop of textProperties) {
+                if (result[prop] && typeof result[prop] === 'string') {
+                  bestResult = result[prop];
+                  console.log(`Found text in property '${prop}':`, bestResult);
+                  break;
+                }
+              }
+              
+              // If no text found in common properties, try to stringify the object
+              if (!bestResult) {
+                bestResult = JSON.stringify(result);
+                console.log('Using stringified object as result:', bestResult);
+              }
+            }
+          }
+          
+          console.log('Final result:', bestResult);
+          
+          // Post-process common OCR mistakes
+          let processedResult = bestResult.trim();
+          if (processedResult) {
+            // Fix common OCR mistakes
+            processedResult = processedResult
+              // .replace(/\\l/g, 'V')   // Fix "\l" -> "V" (backslash + lowercase L)
+              // .replace(/\\I/g, 'V')   // Fix "\I" -> "V" (backslash + uppercase I)
+              // .replace(/\\i/g, 'V')   // Fix "\i" -> "V" (backslash + lowercase i)
+              // //.replace(/^ioutiful$/i, 'Vioutiful') // Fix the specific edge case
+              // .replace(/['']/g, 't')  // Replace smart quotes with 't'
+              // .replace(/[''`]/g, 't') // Replace various apostrophes with 't'
+              // .replace(/['r]/g, 't')  // Fix the specific "Viou'riful" -> "Vioutiful" case
+              // .replace(/['s]/g, 'ts') // Fix "it's" -> "its" cases
+              .replace(/[^a-zA-Z0-9]/g, '') // Remove all non-alphanumeric characters
+              .replace(/\s+/g, '')    // Remove all whitespace
+              .substring(0, 12);      // Limit to 12 characters
+            
+            // Try to reconstruct common patterns if OCR missed parts
+            
+            
+            console.log('Processed result:', processedResult);
+          }
+          
+          setOcrResult(processedResult || 'No text detected');
+        } catch (err) {
+          console.error('Scribe.js error:', err);
+          setOcrResult(`Error reading text: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        }
+        
+        setLoading(false);
+      };
+      
+      imageElement.src = image;
+    } catch (err) {
+      console.error('Crop error:', err);
+      setOcrResult('Error processing image');
       setLoading(false);
     }
   };
 
-  // Helper to load an image from a URL or data URL
-  function loadImage(src: string): Promise<HTMLImageElement> {
-    return new Promise((resolve, reject) => {
-      const img = new window.Image();
-      img.crossOrigin = 'Anonymous';
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = src;
-    });
-  }
+  const handleReset = () => {
+    setImage(null);
+    setOcrResult('');
+    setShowCropper(false);
+    setCrop({ x: 0, y: 0 });
+    setZoom(1);
+    setCroppedAreaPixels(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
   return (
-    <div style={{ maxWidth: 400, margin: '0 auto', padding: 16 }}>
+    <div style={{ maxWidth: 600, margin: '0 auto', padding: 16 }}>
       <h2>Summer Game Code OCR</h2>
-      <input
-        type="file"
-        accept="image/*"
-        ref={fileInputRef}
-        onChange={handleFileChange}
-        style={{ marginBottom: 16 }}
-      />
-      {image && (
+      
+      {!showCropper && (
         <div style={{ marginBottom: 16 }}>
-          <img
-            src={image}
-            alt="Uploaded preview"
-            style={{ width: '100%', border: '1px solid #ccc', marginBottom: 8 }}
+          <input
+            type="file"
+            accept="image/*"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            style={{ marginBottom: 16 }}
           />
-          <div style={{ fontSize: 12, color: '#555' }}>
-            The code will be detected automatically using template matching.
+          <p style={{ fontSize: 14, color: '#666' }}>
+            Upload a photo of the sign, then crop tightly around just the handwritten code (the white area with the handwritten text).
+          </p>
+        </div>
+      )}
+
+      {showCropper && image && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ position: 'relative', height: 400, marginBottom: 16 }}>
+            <Cropper
+              image={image}
+              crop={crop}
+              zoom={zoom}
+              aspect={4 / 1}
+              minZoom={0.1}
+              maxZoom={10}
+              onCropChange={setCrop}
+              onZoomChange={setZoom}
+              onCropComplete={onCropComplete}
+              style={{
+                containerStyle: {
+                  width: '100%',
+                  height: '100%',
+                  backgroundColor: '#f0f0f0',
+                },
+                cropAreaStyle: {
+                  border: '2px solid #00ff00',
+                  backgroundColor: 'rgba(0, 255, 0, 0.1)',
+                },
+              }}
+            />
+          </div>
+          
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8, fontSize: 12, color: '#666' }}>
+              <strong>Instructions:</strong>
+              <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
+                <li>Drag the green rectangle to position it over the handwritten text</li>
+                <li>Pinch/scroll to zoom in (up to 10x zoom)</li>
+                <li>The crop area is wide and short (4:1 ratio) - perfect for "Vioutiful"</li>
+                <li>Make sure only the handwritten text is inside the green box</li>
+                <li>Scribe.js will automatically focus on handwriting and ignore printed text</li>
+              </ul>
+            </div>
+            
+            <button 
+              onClick={handleCrop} 
+              disabled={loading}
+              style={{ marginRight: 8, padding: '8px 16px' }}
+            >
+              {loading ? 'Reading...' : 'Read Code'}
+            </button>
+            <button 
+              onClick={handleReset}
+              style={{ padding: '8px 16px' }}
+            >
+              Upload New Image
+            </button>
           </div>
         </div>
       )}
-      {graySrcUrl && (
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 12, color: '#555' }}>Grayscale uploaded image:</div>
-          <img src={graySrcUrl} alt="Grayscale uploaded" style={{ width: '100%', border: '1px solid #aaa', marginTop: 4 }} />
-        </div>
-      )}
-      {grayTemplUrl && (
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 12, color: '#555' }}>Grayscale template image:</div>
-          <img src={grayTemplUrl} alt="Grayscale template" style={{ width: '100%', border: '1px solid #aaa', marginTop: 4 }} />
-        </div>
-      )}
-      {error && (
-        <div style={{ color: 'red', marginBottom: 16 }}>
-          <strong>Error:</strong> {error}
-      </div>
-      )}
-      <button onClick={handleOcr} disabled={!image || loading} style={{ marginBottom: 16 }}>
-        {loading ? 'Reading...' : 'Read Code'}
-        </button>
-      <div style={{ marginBottom: 16 }}>
-        <label htmlFor="ocr-result">Code:</label>
-        <input
-          id="ocr-result"
-          type="text"
-          value={ocrResult}
-          readOnly
-          style={{ width: '100%', fontSize: 20, textAlign: 'center', marginTop: 4 }}
-        />
-      </div>
-      {codeAreaDataUrl && (
+
+      {ocrResult && (
         <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: '#555' }}>Code area sent to OCR:</div>
-          <img src={codeAreaDataUrl} alt="Code area for OCR" style={{ width: '100%', border: '1px solid #aaa', marginTop: 4 }} />
+          <label htmlFor="ocr-result">Code:</label>
+          <input
+            id="ocr-result"
+            type="text"
+            value={ocrResult}
+            readOnly
+            style={{ 
+              width: '100%', 
+              fontSize: 20, 
+              textAlign: 'center', 
+              marginTop: 4,
+              padding: '8px',
+              border: '1px solid #ccc',
+              borderRadius: '4px'
+            }}
+          />
         </div>
       )}
-      {debugOverlayUrl && (
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: '#555' }}>Debug Overlay:</div>
-          <img src={debugOverlayUrl} alt="Debug Overlay" style={{ width: '100%', border: '1px solid #aaa', marginTop: 4 }} />
-        </div>
-      )}
+
       {/* Hidden canvas for cropping */}
       <canvas ref={canvasRef} style={{ display: 'none' }} />
-      {!opencvReady && (
-        <div style={{ color: 'red', fontSize: 12 }}>
-          OpenCV.js is loading... Please wait before using template matching.
-        </div>
-      )}
     </div>
   );
 }

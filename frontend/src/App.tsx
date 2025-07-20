@@ -2,13 +2,14 @@ import { useRef, useState, useCallback } from 'react';
 import Cropper from 'react-easy-crop';
 // @ts-ignore - Static import of Scribe.js
 import scribe from 'scribe.js-ocr';
+import { apiService } from './services/apiService';
 
-// Type declarations for Scribe.js results
-interface ScribeResult {
-  text: string;
-  confidence?: number;
-  boundingBox?: any;
-}
+// Type declarations for Scribe.js results (unused but kept for reference)
+// interface ScribeResult {
+//   text: string;
+//   confidence?: number;
+//   boundingBox?: any;
+// }
 
 function App() {
   const [image, setImage] = useState<string | null>(null);
@@ -18,6 +19,20 @@ function App() {
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<any>(null);
   const [showCropper, setShowCropper] = useState(false);
+  
+  // AADL Login state
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [debugMode, setDebugMode] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionMessages, setSubmissionMessages] = useState<Array<{
+    text: string;
+    type: 'success' | 'error' | 'warning' | 'info';
+  }>>([]);
+  
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const scribeInitialized = useRef(false);
@@ -37,7 +52,7 @@ function App() {
     }
   };
 
-  const onCropComplete = useCallback((croppedArea: any, croppedAreaPixels: any) => {
+  const onCropComplete = useCallback((_croppedArea: any, croppedAreaPixels: any) => {
     setCroppedAreaPixels(croppedAreaPixels);
   }, []);
 
@@ -269,9 +284,176 @@ function App() {
     }
   };
 
+  // AADL Login and submission functions
+  const handleLogin = async () => {
+    if (!username || !password) {
+      setLoginError('Please enter both username and password');
+      return;
+    }
+
+    setIsLoggingIn(true);
+    setLoginError('');
+
+    try {
+      // Check if server is running
+      const serverHealthy = await apiService.checkHealth();
+      if (!serverHealthy) {
+        setLoginError('Server is not running. Please start the backend server first.');
+        return;
+      }
+
+      // Attempt login via API
+      const response = await apiService.login(username, password, debugMode);
+      
+      if (response.success) {
+        setIsLoggedIn(true);
+        setLoginError('');
+      } else {
+        setLoginError(response.message || 'Login failed. Please check your credentials.');
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      setLoginError('Login failed. Please try again.');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleSubmitCode = async () => {
+    if (!ocrResult || !isLoggedIn) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmissionMessages([]); // Clear previous messages
+
+    try {
+      const response = await apiService.submitCode(ocrResult, debugMode);
+      
+      // Store the messages for display
+      if (response.messages) {
+        setSubmissionMessages(response.messages);
+      }
+      
+      if (response.success) {
+        // Clear the result after successful submission
+        setOcrResult('');
+      }
+      
+      // Don't show alert - let the messages display instead
+    } catch (error) {
+      console.error('Code submission error:', error);
+      setSubmissionMessages([{
+        text: 'Code submission failed. Please try again.',
+        type: 'error'
+      }]);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await apiService.logout();
+      setIsLoggedIn(false);
+      setUsername('');
+      setPassword('');
+      setLoginError('');
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
+
   return (
     <div style={{ maxWidth: 600, margin: '0 auto', padding: 16 }}>
       <h2>Summer Game Code OCR</h2>
+      
+      {/* AADL Login Section */}
+      {!isLoggedIn ? (
+        <div style={{ marginBottom: 24, padding: 16, border: '1px solid #ccc', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
+          <h3 style={{ marginTop: 0 }}>AADL Login</h3>
+          <p style={{ fontSize: 14, color: '#666', marginBottom: 16 }}>
+            Login to automatically submit codes to the AADL Summer Game.
+          </p>
+          
+          <div style={{ marginBottom: 12 }}>
+            <label htmlFor="username" style={{ display: 'block', marginBottom: 4 }}>Username or Email:</label>
+            <input
+              id="username"
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+              placeholder="Enter your AADL username or email"
+            />
+          </div>
+          
+          <div style={{ marginBottom: 12 }}>
+            <label htmlFor="password" style={{ display: 'block', marginBottom: 4 }}>Password:</label>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+              placeholder="Enter your AADL password"
+            />
+          </div>
+          
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={debugMode}
+                onChange={(e) => setDebugMode(e.target.checked)}
+              />
+              Debug Mode (show browser window)
+            </label>
+          </div>
+          
+          {loginError && (
+            <div style={{ color: 'red', marginBottom: 12, fontSize: 14 }}>
+              {loginError}
+            </div>
+          )}
+          
+          <button
+            onClick={handleLogin}
+            disabled={isLoggingIn}
+            style={{ 
+              padding: '10px 20px', 
+              backgroundColor: '#007bff', 
+              color: 'white', 
+              border: 'none', 
+              borderRadius: '4px',
+              cursor: isLoggingIn ? 'not-allowed' : 'pointer',
+              opacity: isLoggingIn ? 0.6 : 1
+            }}
+          >
+            {isLoggingIn ? 'Logging in...' : 'Login to AADL'}
+          </button>
+        </div>
+      ) : (
+        <div style={{ marginBottom: 24, padding: 12, border: '1px solid #28a745', borderRadius: '8px', backgroundColor: '#d4edda' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: '#155724', fontWeight: 'bold' }}>✓ Logged in to AADL</span>
+            <button
+              onClick={handleLogout}
+              style={{ 
+                padding: '6px 12px', 
+                backgroundColor: '#dc3545', 
+                color: 'white', 
+                border: 'none', 
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '12px'
+              }}
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+      )}
       
       {!showCropper && (
         <div style={{ marginBottom: 16 }}>
@@ -321,9 +503,7 @@ function App() {
               <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
                 <li>Drag the green rectangle to position it over the handwritten text</li>
                 <li>Pinch/scroll to zoom in (up to 10x zoom)</li>
-                <li>The crop area is wide and short (4:1 ratio) - perfect for "Vioutiful"</li>
                 <li>Make sure only the handwritten text is inside the green box</li>
-                <li>Scribe.js will automatically focus on handwriting and ignore printed text</li>
               </ul>
             </div>
             
@@ -351,7 +531,9 @@ function App() {
             id="ocr-result"
             type="text"
             value={ocrResult}
-            readOnly
+            onChange={(e) => setOcrResult(e.target.value)}
+            maxLength={12}
+            placeholder="Edit the detected code if needed..."
             style={{ 
               width: '100%', 
               fontSize: 20, 
@@ -359,9 +541,75 @@ function App() {
               marginTop: 4,
               padding: '8px',
               border: '1px solid #ccc',
-              borderRadius: '4px'
+              borderRadius: '4px',
+              backgroundColor: '#fff'
             }}
           />
+          <p style={{ fontSize: 12, color: '#666', marginTop: 4, textAlign: 'center' }}>
+            You can edit this text if the OCR didn't get it quite right. Max 12 characters, letters and numbers only.
+          </p>
+          
+          {/* Submit to AADL button */}
+          {isLoggedIn && (
+            <div style={{ marginTop: 16, textAlign: 'center' }}>
+              <button
+                onClick={handleSubmitCode}
+                disabled={isSubmitting || !ocrResult}
+                style={{ 
+                  padding: '12px 24px', 
+                  backgroundColor: '#28a745', 
+                  color: 'white', 
+                  border: 'none', 
+                  borderRadius: '8px',
+                  cursor: (isSubmitting || !ocrResult) ? 'not-allowed' : 'pointer',
+                  opacity: (isSubmitting || !ocrResult) ? 0.6 : 1,
+                  fontSize: '16px',
+                  fontWeight: 'bold'
+                }}
+              >
+                {isSubmitting ? 'Submitting...' : 'Submit to AADL Summer Game'}
+              </button>
+              <p style={{ fontSize: '12px', color: '#666', marginTop: 4 }}>
+                Automatically submits the code to your AADL Summer Game account.
+              </p>
+            </div>
+          )}
+          
+          {/* Submission Messages */}
+          {submissionMessages.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <h4 style={{ marginBottom: 8, fontSize: '14px', fontWeight: 'bold' }}>
+                Submission Results:
+              </h4>
+              {submissionMessages.map((message, index) => (
+                <div
+                  key={index}
+                  style={{
+                    padding: '12px',
+                    marginBottom: 8,
+                    borderRadius: '6px',
+                    border: '1px solid',
+                    backgroundColor: 
+                      message.type === 'success' ? '#d4edda' :
+                      message.type === 'error' ? '#f8d7da' :
+                      message.type === 'warning' ? '#fff3cd' : '#d1ecf1',
+                    borderColor:
+                      message.type === 'success' ? '#c3e6cb' :
+                      message.type === 'error' ? '#f5c6cb' :
+                      message.type === 'warning' ? '#ffeaa7' : '#bee5eb',
+                    color:
+                      message.type === 'success' ? '#155724' :
+                      message.type === 'error' ? '#721c24' :
+                      message.type === 'warning' ? '#856404' : '#0c5460',
+                    fontSize: '14px',
+                    lineHeight: '1.4'
+                  }}
+                >
+                  {message.text}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

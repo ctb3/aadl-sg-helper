@@ -1,4 +1,6 @@
-const API_BASE_URL = 'http://localhost:3001/api';
+import { currentConfig } from '../config';
+
+const API_BASE_URL = currentConfig.apiBaseUrl;
 
 export interface LoginResponse {
   success: boolean;

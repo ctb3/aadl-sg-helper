@@ -53,21 +53,50 @@ aadl-sg-helper/
 
 ### Production Deployment TODO
 
-1. **Deploy Backend** to Railway/Render/Railway:
-   - Upload `backend/` folder
-   - Set environment variables if needed
-   - Update `frontend/src/config.ts` with your backend URL
+**AWS Deployment Setup:**
 
-2. **Deploy Frontend** to Vercel/Netlify:
-   - Upload `frontend/` folder
-   - Build command: `npm run build`
-   - Output directory: `dist`
+1. **Frontend (AWS Amplify):**
+   - Domain: `aadl.ctb3.net`
+   - Build command: `cd frontend && npm run build`
+   - Output directory: `frontend/dist`
+   - Configuration: `amplify.yml`
+
+2. **Backend (AWS ECS):**
+   - Domain: `api.aadl.ctb3.net`
+   - Container: Node.js with Playwright
+   - Dockerfile: `backend/Dockerfile`
+   - Port: 3001
+
+3. **SSL Certificates:**
+   - Automatic with AWS Certificate Manager
+   - Covers both subdomains
+
+**Quick Deploy:**
+```bash
+./deploy.sh
+```
 
 ## Technologies
 
 - **Frontend**: React, TypeScript, Vite, Scribe.js OCR, React Easy Crop
 - **Backend**: Express.js, Playwright (browser automation)
 
-## Configuration
+## Environment Setup
 
-Update `frontend/src/config.ts` to point to your deployed backend URL when going to production.
+### Frontend Environment Variables
+ `frontend/.env.local` for local development:
+```bash
+VITE_API_BASE_URL=http://localhost:3001/api
+```
+
+### Backend Environment Variables
+ `backend/.env` for local development:
+```bash
+PORT=3001
+NODE_ENV=development
+```
+
+### Production Environment Variables
+Set these in your deployment platform:
+- **Frontend (Amplify)**: `VITE_API_BASE_URL=https://api.aadl.ctb3.net/api`
+- **Backend (ECS)**: `PORT=3001`, `NODE_ENV=production`

@@ -1,17 +1,7 @@
-// Configuration for different environments
+// Configuration using environment variables
 export const config = {
-  // Development - local backend
-  development: {
-    apiBaseUrl: 'http://localhost:3001/api'
-  },
-  // Production - deployed backend (update this when you deploy)
-  production: {
-    apiBaseUrl: 'https://your-backend-url.com/api' //TODO: Update this when you deploy
-  }
+  apiBaseUrl: import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api'
 };
 
-// Get current environment
-const isDevelopment = import.meta.env.DEV;
-
-// Export the appropriate config
-export const currentConfig = isDevelopment ? config.development : config.production; 
+// Export the config directly
+export const currentConfig = config; 

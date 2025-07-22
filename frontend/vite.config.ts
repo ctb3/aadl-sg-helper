@@ -26,6 +26,17 @@ export default defineConfig({
       include: [/scribe\.js-ocr/, /node_modules/]
     }
   },
+  worker: {
+    //TODO: check if this is needed
+    // --- do this 
+    format: 'es',
+    // --- or this
+    // rollupOptions: {
+    //   output: {
+    //     inlineDynamicImports: true,
+    //   },
+    // },
+  },
   define: {
     global: 'globalThis'
   }

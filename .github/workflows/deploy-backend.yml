@@ -59,7 +59,32 @@ jobs:
         aws iam put-role-policy \
           --role-name aws-elasticbeanstalk-ec2-role \
           --policy-name ElasticBeanstalkEC2Policy \
-          --policy-document file://backend/iam-instance-profile.json
+          --policy-document '{
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "ec2:*",
+                  "elasticloadbalancing:*",
+                  "cloudwatch:*",
+                  "s3:*",
+                  "sns:*",
+                  "cloudformation:*",
+                  "autoscaling:*",
+                  "cloudwatch:PutMetricData",
+                  "ec2:DescribeVolumes",
+                  "ec2:DescribeTags",
+                  "logs:PutLogEvents",
+                  "logs:DescribeLogStreams",
+                  "logs:DescribeLogGroups",
+                  "logs:CreateLogStream",
+                  "logs:CreateLogGroup"
+                ],
+                "Resource": "*"
+              }
+            ]
+          }'
         
         # Create instance profile
         aws iam create-instance-profile \

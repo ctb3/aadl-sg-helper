@@ -55,36 +55,10 @@ jobs:
             ]
           }' 2>/dev/null || echo "Role already exists"
         
-        # Attach the policy to the role
-        aws iam put-role-policy \
+        # Attach AWS managed policy for Elastic Beanstalk
+        aws iam attach-role-policy \
           --role-name aws-elasticbeanstalk-ec2-role \
-          --policy-name ElasticBeanstalkEC2Policy \
-          --policy-document '{
-            "Version": "2012-10-17",
-            "Statement": [
-              {
-                "Effect": "Allow",
-                "Action": [
-                  "ec2:*",
-                  "elasticloadbalancing:*",
-                  "cloudwatch:*",
-                  "s3:*",
-                  "sns:*",
-                  "cloudformation:*",
-                  "autoscaling:*",
-                  "cloudwatch:PutMetricData",
-                  "ec2:DescribeVolumes",
-                  "ec2:DescribeTags",
-                  "logs:PutLogEvents",
-                  "logs:DescribeLogStreams",
-                  "logs:DescribeLogGroups",
-                  "logs:CreateLogStream",
-                  "logs:CreateLogGroup"
-                ],
-                "Resource": "*"
-              }
-            ]
-          }'
+          --policy-arn arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier 2>/dev/null || echo "Policy already attached"
         
         # Create instance profile
         aws iam create-instance-profile \

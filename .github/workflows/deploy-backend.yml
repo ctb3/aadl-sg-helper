@@ -37,6 +37,39 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: us-east-2
         
+    - name: Create IAM instance profile if not exists
+      run: |
+        # Create IAM role for EC2 instances
+        aws iam create-role \
+          --role-name aws-elasticbeanstalk-ec2-role \
+          --assume-role-policy-document '{
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "ec2.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          }' 2>/dev/null || echo "Role already exists"
+        
+        # Attach the policy to the role
+        aws iam put-role-policy \
+          --role-name aws-elasticbeanstalk-ec2-role \
+          --policy-name ElasticBeanstalkEC2Policy \
+          --policy-document file://backend/iam-instance-profile.json
+        
+        # Create instance profile
+        aws iam create-instance-profile \
+          --instance-profile-name aws-elasticbeanstalk-ec2-role 2>/dev/null || echo "Instance profile already exists"
+        
+        # Add role to instance profile
+        aws iam add-role-to-instance-profile \
+          --instance-profile-name aws-elasticbeanstalk-ec2-role \
+          --role-name aws-elasticbeanstalk-ec2-role 2>/dev/null || echo "Role already in instance profile"
+        
     - name: Create Elastic Beanstalk environment if not exists
       run: |
         # Check if environment exists
@@ -52,6 +85,7 @@ jobs:
             --application-name aadl-sg-backend \
             --environment-name aadl-sg-backend-prod-new \
             --solution-stack-name "64bit Amazon Linux 2023 v6.6.1 running Node.js 20" \
+            --option-settings Namespace=aws:autoscaling:launchconfiguration,OptionName=IamInstanceProfile,Value=aws-elasticbeanstalk-ec2-role \
             --region us-east-2
           
           echo "Waiting for environment to be ready..."

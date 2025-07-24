@@ -37,22 +37,79 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: us-east-2
         
+    - name: Create IAM instance profile
+      run: |
+        echo "Creating IAM instance profile for Elastic Beanstalk..."
+        
+        # Create IAM role for EC2 instances
+        echo "Creating IAM role..."
+        aws iam create-role \
+          --role-name aws-elasticbeanstalk-ec2-role \
+          --assume-role-policy-document '{
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "ec2.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          }' 2>/dev/null && echo "Role created" || echo "Role already exists"
+        
+        # Attach AWS managed policy for Elastic Beanstalk
+        echo "Attaching policy to role..."
+        aws iam attach-role-policy \
+          --role-name aws-elasticbeanstalk-ec2-role \
+          --policy-arn arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier 2>/dev/null && echo "Policy attached" || echo "Policy already attached"
+        
+        # Create instance profile
+        echo "Creating instance profile..."
+        aws iam create-instance-profile \
+          --instance-profile-name aws-elasticbeanstalk-ec2-role 2>/dev/null && echo "Instance profile created" || echo "Instance profile already exists"
+        
+        # Add role to instance profile
+        echo "Adding role to instance profile..."
+        aws iam add-role-to-instance-profile \
+          --instance-profile-name aws-elasticbeanstalk-ec2-role \
+          --role-name aws-elasticbeanstalk-ec2-role 2>/dev/null && echo "Role added to instance profile" || echo "Role already in instance profile"
+        
+        # Verify the instance profile exists
+        echo "Verifying instance profile..."
+        aws iam get-instance-profile --instance-profile-name aws-elasticbeanstalk-ec2-role
+        
     - name: Create Elastic Beanstalk environment if not exists
       run: |
-        # Check if environment exists
-        if ! aws elasticbeanstalk describe-environments \
+        # Check if environment exists and its status
+        ENV_STATUS=$(aws elasticbeanstalk describe-environments \
           --application-name aadl-sg-backend \
           --environment-names aadl-sg-backend-prod \
           --region us-east-2 \
           --query 'Environments[0].Status' \
-          --output text 2>/dev/null | grep -q "Ready\|Launching\|Updating"; then
+          --output text 2>/dev/null || echo "NOT_FOUND")
+        
+        echo "Current environment status: $ENV_STATUS"
+        
+        # If environment is in a failed state, terminate it
+        if [[ "$ENV_STATUS" == "Failed" || "$ENV_STATUS" == "Terminated" ]]; then
+          echo "Environment is in failed/terminated state. Terminating..."
+          aws elasticbeanstalk terminate-environment \
+            --environment-name aadl-sg-backend-prod \
+            --region us-east-2 || true
           
+          echo "Waiting for termination to complete..."
+          sleep 30
+        fi
+        
+        # Check if environment exists and is ready
+        if [[ "$ENV_STATUS" != "Ready" && "$ENV_STATUS" != "Launching" && "$ENV_STATUS" != "Updating" ]]; then
           echo "Creating new environment..."
           aws elasticbeanstalk create-environment \
             --application-name aadl-sg-backend \
             --environment-name aadl-sg-backend-prod \
             --solution-stack-name "64bit Amazon Linux 2023 v6.6.1 running Node.js 20" \
-            --option-settings Namespace=aws:autoscaling:launchconfiguration,OptionName=IamInstanceProfile,Value=github-actions-aadl \
+            --option-settings Namespace=aws:autoscaling:launchconfiguration,OptionName=IamInstanceProfile,Value=aws-elasticbeanstalk-ec2-role \
             --region us-east-2
           
           echo "Waiting for environment to be ready..."
@@ -60,7 +117,7 @@ jobs:
             --environment-names aadl-sg-backend-prod \
             --region us-east-2
         else
-          echo "Environment already exists"
+          echo "Environment already exists and is ready"
         fi
         
     - name: Deploy to Elastic Beanstalk

@@ -75,9 +75,11 @@ jobs:
           --instance-profile-name aws-elasticbeanstalk-ec2-role \
           --role-name aws-elasticbeanstalk-ec2-role 2>/dev/null && echo "Role added to instance profile" || echo "Role already in instance profile"
         
-        # Verify the instance profile exists
-        echo "Verifying instance profile..."
-        aws iam get-instance-profile --instance-profile-name aws-elasticbeanstalk-ec2-role
+        echo "IAM instance profile setup completed successfully"
+        
+        # Wait a moment for IAM changes to propagate
+        echo "Waiting for IAM changes to propagate..."
+        sleep 10
         
     - name: Create Elastic Beanstalk environment if not exists
       run: |

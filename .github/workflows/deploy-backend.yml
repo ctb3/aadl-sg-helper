@@ -41,9 +41,13 @@ jobs:
       run: |
         echo "Creating IAM instance profile for Elastic Beanstalk..."
         
+        # Check current AWS account and region
+        echo "Current AWS Account: $(aws sts get-caller-identity --query Account --output text)"
+        echo "Current AWS Region: $(aws configure get region)"
+        
         # Create IAM role for EC2 instances
         echo "Creating IAM role..."
-        aws iam create-role \
+        if aws iam create-role \
           --role-name aws-elasticbeanstalk-ec2-role \
           --assume-role-policy-document '{
             "Version": "2012-10-17",
@@ -56,33 +60,64 @@ jobs:
                 "Action": "sts:AssumeRole"
               }
             ]
-          }' 2>/dev/null && echo "Role created" || echo "Role already exists"
+          }' 2>/dev/null; then
+          echo "Role created successfully"
+        else
+          echo "Role already exists or creation failed"
+        fi
         
         # Attach AWS managed policy for Elastic Beanstalk
         echo "Attaching policy to role..."
-        aws iam attach-role-policy \
+        if aws iam attach-role-policy \
           --role-name aws-elasticbeanstalk-ec2-role \
-          --policy-arn arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier 2>/dev/null && echo "Policy attached" || echo "Policy already attached"
+          --policy-arn arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier 2>/dev/null; then
+          echo "Policy attached successfully"
+        else
+          echo "Policy already attached or attachment failed"
+        fi
         
         # Create instance profile
         echo "Creating instance profile..."
-        aws iam create-instance-profile \
-          --instance-profile-name aws-elasticbeanstalk-ec2-role 2>/dev/null && echo "Instance profile created" || echo "Instance profile already exists"
+        if aws iam create-instance-profile \
+          --instance-profile-name aws-elasticbeanstalk-ec2-role 2>/dev/null; then
+          echo "Instance profile created successfully"
+        else
+          echo "Instance profile already exists or creation failed"
+        fi
         
         # Add role to instance profile
         echo "Adding role to instance profile..."
-        aws iam add-role-to-instance-profile \
+        if aws iam add-role-to-instance-profile \
           --instance-profile-name aws-elasticbeanstalk-ec2-role \
-          --role-name aws-elasticbeanstalk-ec2-role 2>/dev/null && echo "Role added to instance profile" || echo "Role already in instance profile"
+          --role-name aws-elasticbeanstalk-ec2-role 2>/dev/null; then
+          echo "Role added to instance profile successfully"
+        else
+          echo "Role already in instance profile or addition failed"
+        fi
+        
+        # List all instance profiles to verify
+        echo "Listing all instance profiles:"
+        aws iam list-instance-profiles --query 'InstanceProfiles[?InstanceProfileName==`aws-elasticbeanstalk-ec2-role`]' --output table
         
         echo "IAM instance profile setup completed successfully"
         
         # Wait a moment for IAM changes to propagate
         echo "Waiting for IAM changes to propagate..."
-        sleep 10
+        sleep 15
         
     - name: Create Elastic Beanstalk environment if not exists
       run: |
+        # Verify instance profile exists before proceeding
+        echo "Verifying instance profile exists..."
+        if aws iam list-instance-profiles --query 'InstanceProfiles[?InstanceProfileName==`aws-elasticbeanstalk-ec2-role`]' --output text | grep -q "aws-elasticbeanstalk-ec2-role"; then
+          echo "Instance profile exists - proceeding with environment creation"
+        else
+          echo "ERROR: Instance profile aws-elasticbeanstalk-ec2-role does not exist!"
+          echo "Available instance profiles:"
+          aws iam list-instance-profiles --query 'InstanceProfiles[*].InstanceProfileName' --output table
+          exit 1
+        fi
+        
         # Check if environment exists and its status
         ENV_STATUS=$(aws elasticbeanstalk describe-environments \
           --application-name aadl-sg-backend \

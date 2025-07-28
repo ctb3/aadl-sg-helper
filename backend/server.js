@@ -13,6 +13,13 @@ const PORT = process.env.PORT || 8081;
 
 // Middleware
 app.use(cors());
+//TODO: lock this down to just the frontend domain we want
+/*
+app.use(cors({
+  origin: ['https://aadl.ctb3.net', 'http://localhost:5173'],
+  credentials: true
+}));
+*/
 app.use(express.json());
 
 // Store sessions in memory (in production, use a proper database)

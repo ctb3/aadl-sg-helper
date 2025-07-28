@@ -27,9 +27,9 @@ aadl-sg-helper/
    ```bash
    cd backend
    npm install
-   npm run server
+   npm run dev
    ```
-   Backend will run on http://localhost:3001
+   Backend will run on http://localhost:8081
 
 2. **Start the Frontend:**
    ```bash
@@ -51,30 +51,20 @@ aadl-sg-helper/
 - `npm run build` - Build for production
 - `npm run preview` - Preview the built app
 
-### Production Deployment TODO
+## Production Deployment
 
-**AWS Deployment Setup:**
+**Current Production URLs:**
+- **Frontend**: https://aadl.ctb3.net
+- **Backend API**: https://aadl-api.ctb3.net
 
-1. **Frontend (AWS Amplify):**
-   - Domain: `aadl.ctb3.net`
-   - Build command: `cd frontend && npm run build`
-   - Output directory: `frontend/dist`
-   - Configuration: `amplify.yml`
+**Deployment Platforms:**
+- **Frontend**: AWS Amplify (auto-deploys on push to main)
+- **Backend**: AWS Elastic Beanstalk (auto-deploys on push to main)
 
-2. **Backend (AWS ECS):**
-   - Domain: `api.aadl.ctb3.net`
-   - Container: Node.js with Playwright
-   - Dockerfile: `backend/Dockerfile`
-   - Port: 3001
-
-3. **SSL Certificates:**
-   - Automatic with AWS Certificate Manager
-   - Covers both subdomains
-
-**Quick Deploy:**
-```bash
-./deploy.sh
-```
+**Deployment Process:**
+- Frontend and backend automatically deploy when you push to the `main` branch
+- GitHub Actions handles backend deployment to Elastic Beanstalk
+- Amplify handles frontend deployment
 
 ## Technologies
 
@@ -84,19 +74,27 @@ aadl-sg-helper/
 ## Environment Setup
 
 ### Frontend Environment Variables
- `frontend/.env.local` for local development:
+Create `frontend/.env.local` for local development:
 ```bash
-VITE_API_BASE_URL=http://localhost:3001/api
+VITE_API_BASE_URL=http://localhost:8081/api
 ```
 
 ### Backend Environment Variables
- `backend/.env` for local development:
+Create `backend/.env` for local development:
 ```bash
-PORT=3001
+PORT=8081
 NODE_ENV=development
 ```
 
 ### Production Environment Variables
 Set these in your deployment platform:
-- **Frontend (Amplify)**: `VITE_API_BASE_URL=https://api.aadl.ctb3.net/api`
-- **Backend (ECS)**: `PORT=3001`, `NODE_ENV=production`
+- **Frontend (Amplify)**: `VITE_API_BASE_URL=https://aadl-api.ctb3.net/api`
+- **Backend (Elastic Beanstalk)**: `PORT=8081`, `NODE_ENV=production`
+
+
+## Development Notes
+
+- The backend uses Playwright for browser automation to interact with the AADL website
+- Sessions are persisted between deployments using a local JSON file
+- CORS is configured to allow requests from the production frontend domain
+- The frontend uses Vite for fast development and optimized builds

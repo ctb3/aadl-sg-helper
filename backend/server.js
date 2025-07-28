@@ -4,6 +4,7 @@ import { chromium } from 'playwright';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs';
+import { logger } from './logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -22,6 +23,18 @@ app.use(cors({
 */
 app.use(express.json());
 
+// Request tracking middleware
+app.use((req, res, next) => {
+  req.requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  logger.info('Incoming request', {
+    requestId: req.requestId,
+    method: req.method,
+    url: req.url,
+    userAgent: req.get('User-Agent')
+  });
+  next();
+});
+
 // Store sessions in memory (in production, use a proper database)
 const sessions = new Map();
 
@@ -38,10 +51,10 @@ function loadSessions() {
       for (const [key, value] of Object.entries(parsed)) {
         sessions.set(key, value);
       }
-      console.log(`Loaded ${sessions.size} sessions from file`);
+      logger.info(`Loaded ${sessions.size} sessions from file`);
     }
   } catch (error) {
-    console.error('Error loading sessions:', error);
+    logger.error('Error loading sessions', error);
   }
 }
 
@@ -51,7 +64,7 @@ function saveSessions() {
     const data = JSON.stringify(Object.fromEntries(sessions));
     fs.writeFileSync(SESSION_FILE, data);
   } catch (error) {
-    console.error('Error saving sessions:', error);
+    logger.error('Error saving sessions', error);
   }
 }
 
@@ -78,9 +91,9 @@ class AADLService {
       });
 
       this.page = await this.context.newPage();
-      console.log('AADL Service initialized successfully');
+      logger.info('AADL Service initialized successfully');
     } catch (error) {
-      console.error('Failed to initialize AADL Service:', error);
+      logger.error('Failed to initialize AADL Service', error);
       throw error;
     }
   }
@@ -91,7 +104,7 @@ class AADLService {
     }
 
     try {
-      console.log('Attempting to login to AADL...');
+      logger.info('Attempting to login to AADL');
       
       await this.page.goto('https://aadl.org/user/login');
       await this.page.waitForSelector('input[name="name"]', { timeout: 10000 });
@@ -107,14 +120,14 @@ class AADLService {
       const isLoggedIn = !currentUrl.includes('/user/login');
       
       if (isLoggedIn) {
-        console.log('Login successful!');
+        logger.info('Login successful');
         return true;
       } else {
-        console.log('Login failed - still on login page');
+        logger.warn('Login failed - still on login page');
         return false;
       }
     } catch (error) {
-      console.error('Login error:', error);
+      logger.error('Login error', error);
       return false;
     }
   }
@@ -125,7 +138,7 @@ class AADLService {
     }
 
     try {
-      console.log(`Submitting code: ${code}`);
+      logger.info(`Submitting code: ${code}`);
       
       await this.page.goto('https://aadl.org/summergame/player/0/gamecode');
       
@@ -150,7 +163,7 @@ class AADLService {
         // First, try the specific selector from the error log
         await this.page.click('input[id="edit-submit"][type="submit"]');
       } catch (error) {
-        console.log('Specific selector failed, trying alternative approaches...');
+        logger.warn('Specific selector failed, trying alternative approaches');
         
         // Try clicking by text content TODO: delete?
         await this.page.click('input[value="Submit"]');
@@ -161,14 +174,14 @@ class AADLService {
       const result = await this.checkSubmissionResult();
       
       if (result.success) {
-        console.log('Code submitted successfully!');
+        logger.info('Code submitted successfully');
         return { success: true, messages: result.messages };
       } else {
-        console.log('Code submission failed or already submitted');
+        logger.warn('Code submission failed or already submitted');
         return { success: false, messages: result.messages };
       }
     } catch (error) {
-      console.error('Code submission error:', error);
+      logger.error('Code submission error', error);
       return false;
     }
   }
@@ -197,9 +210,9 @@ class AADLService {
 
       sessions.set(sessionId, session);
       saveSessions();
-      console.log('Session saved');
+      logger.info('Session saved');
     } catch (error) {
-      console.error('Failed to save session:', error);
+      logger.error('Failed to save session', error);
     }
   }
 
@@ -210,7 +223,7 @@ class AADLService {
 
       // Check if session is still valid (24 hours)
       if (Date.now() - session.timestamp > 24 * 60 * 60 * 1000) {
-        console.log('Session expired, removing...');
+        logger.warn('Session expired, removing');
         sessions.delete(sessionId);
         saveSessions();
         return false;
@@ -230,10 +243,10 @@ class AADLService {
         }, session.localStorage);
       }
 
-      console.log('Session restored');
+      logger.info('Session restored');
       return true;
     } catch (error) {
-      console.error('Failed to load session:', error);
+      logger.error('Failed to load session', error);
       return false;
     }
   }
@@ -275,7 +288,7 @@ class AADLService {
         messages: messages
       };
     } catch (error) {
-      console.error('Error checking submission result:', error);
+      logger.error('Error checking submission result', error);
       return { success: false, messages: [] };
     }
   }
@@ -294,9 +307,9 @@ class AADLService {
         await this.browser.close();
         this.browser = null;
       }
-      console.log('AADL Service cleaned up');
+      logger.info('AADL Service cleaned up');
     } catch (error) {
-      console.error('Cleanup error:', error);
+      logger.error('Cleanup error', error);
     }
   }
 }
@@ -305,29 +318,46 @@ class AADLService {
 
 // Login endpoint
 app.post('/api/login', async (req, res) => {
+  logger.info('Login request received', {
+    requestId: req.requestId,
+    headers: req.headers,
+    body: { ...req.body, password: '[REDACTED]' }
+  });
+  
   const { username, password, sessionId, debugMode = false } = req.body;
 
   if (!username || !password || !sessionId) {
+    logger.warn('Missing required fields', {
+      requestId: req.requestId,
+      hasUsername: !!username,
+      hasPassword: !!password,
+      hasSessionId: !!sessionId
+    });
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
   try {
+    logger.info('Initializing AADL Service', { requestId: req.requestId });
     const aadlService = new AADLService();
     await aadlService.initialize(debugMode);
     
+    logger.info('Attempting login', { requestId: req.requestId, username });
     const success = await aadlService.login(username, password);
     
     if (success) {
+      logger.info('Login successful, saving session', { requestId: req.requestId });
       await aadlService.saveSession(sessionId);
       await aadlService.cleanup();
+      logger.info('Login endpoint completed successfully', { requestId: req.requestId });
       res.json({ success: true, message: 'Login successful' });
     } else {
+      logger.warn('Login failed', { requestId: req.requestId, username });
       await aadlService.cleanup();
       res.status(401).json({ success: false, message: 'Login failed' });
     }
   } catch (error) {
-    console.error('Login API error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    logger.error('Login API error', error, { requestId: req.requestId, username });
+    res.status(500).json({ success: false, message: `Server error: ${error.message}` });
   }
 });
 
@@ -368,7 +398,7 @@ app.post('/api/submit-code', async (req, res) => {
       });
     }
   } catch (error) {
-    console.error('Submit code API error:', error);
+    logger.error('Submit code API error', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
@@ -392,6 +422,6 @@ app.get('/api/health', (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/api/health`);
+  logger.info(`Server running on port ${PORT}`);
+  logger.info(`Health check: http://localhost:${PORT}/api/health`);
 }); 

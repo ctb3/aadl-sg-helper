@@ -43,6 +43,15 @@ export class ApiService {
         }),
       });
 
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Login failed:', response.status, errorText);
+        return {
+          success: false,
+          message: `Login failed: ${response.statusText}`,
+        };
+      }
+
       const data = await response.json();
       return data;
     } catch (error) {
@@ -67,6 +76,15 @@ export class ApiService {
           debugMode,
         }),
       });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Submit code failed:', response.status, errorText);
+        return {
+          success: false,
+          message: `Submit failed: ${response.statusText}`,
+        };
+      }
 
       const data = await response.json();
       return data;

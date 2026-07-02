@@ -5,7 +5,9 @@ import { config } from "./config";
 import { cropWithPadding, downscaleToLongestEdge } from "./image";
 import { combinedLine, gcvLines } from "./postproc";
 import { claudeReader } from "./readers/claude";
-import { normalize } from "./score";
+import { writeReportMd, writeResultsCsv } from "./report";
+import { cer, normalize } from "./score";
+import type { ReaderResult, RunRecord } from "./types";
 
 /**
  * Tier-2 crop experiment: Claude reads a HIGH-RES crop of the original photo,
@@ -50,6 +52,11 @@ async function main(): Promise<void> {
   const gcvTag = modelTag("gcv", "none");
   fs.mkdirSync(config.cropsDir, { recursive: true });
 
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const outDir = path.join(config.outDir, `${stamp}-gcvcrop`);
+  fs.mkdirSync(outDir, { recursive: true });
+  const records: RunRecord[] = [];
+
   let n = 0,
     ok = 0,
     noLine = 0;
@@ -90,18 +97,58 @@ async function main(): Promise<void> {
 
     if (!line) noLine++;
     n++;
-    const pred = normalize(result.code ?? "");
-    const exact = pred === normalize(gt.code);
+    const res = result as ReaderResult;
+    const pred = normalize(res.code ?? "");
+    const exact = !res.error && pred === normalize(gt.code);
     if (exact) ok++;
+
+    const conf =
+      res.perCharConfidence && res.perCharConfidence.length ? res.perCharConfidence : null;
+    const rec: RunRecord = {
+      filename: gt.filename,
+      reader: "claude",
+      arm: "gcv_crop",
+      predictedRaw: res.code ?? "",
+      predictedNorm: pred,
+      truthNorm: normalize(gt.code),
+      exactMatch: exact,
+      cer: res.error ? 1 : cer(res.code ?? "", gt.code),
+      minConfidence: conf ? Math.min(...conf) : null,
+      meanConfidence: conf ? conf.reduce((a, b) => a + b, 0) / conf.length : null,
+      alternatives: res.alternatives ?? [],
+      latencyMs: res.latencyMs,
+      costUsd: res.costUsd ?? 0,
+      error: res.error ?? null,
+    };
+    records.push(rec);
+    fs.writeFileSync(
+      path.join(outDir, `${sanitize(gt.filename)}__claude__gcv_crop.json`),
+      JSON.stringify({ gt, reader: "claude", arm: "gcv_crop", usedGcvLine: !!line, result: res, record: rec }, null, 2),
+    );
+
     console.log(
       `${exact ? "✓" : "✗"} ${gt.filename.padEnd(32)} truth=${normalize(gt.code).padEnd(13)} ` +
         `pred=${pred.padEnd(13)} ${line ? "" : "(no line; full photo)"}`,
     );
   }
+
+  writeResultsCsv(records, outDir);
+  writeReportMd(records, outDir, {
+    generatedAt: new Date().toISOString(),
+    images: n,
+    readers: ["claude"],
+    arms: ["gcv_crop"],
+    models: { claude: config.claudeModel, localizer: `gcv-line (e${config.gcvMaxEdge})` },
+    fullPhotoFallbacks: noLine,
+    region: config.awsRegion,
+  });
+
   console.log(
     `\nclaude on gcv-line crop: ${ok}/${n} (${((ok / (n || 1)) * 100).toFixed(1)}%) exact` +
       (noLine ? ` · ${noLine} full-photo fallback(s)` : ""),
   );
+  console.log(`  ${path.join(outDir, "report.md")}`);
+  console.log(`  ${path.join(outDir, "results.csv")}`);
 }
 
 main().catch((err) => {

@@ -9,6 +9,18 @@ interface Sym {
   conf: number;
   cx: number; // normalized center x
   cy: number; // normalized center y
+  h: number; // normalized glyph height
+}
+
+// Persisted in rawResponse so post-processing strategies (height filters,
+// phrase subtraction) can be re-scored offline without re-calling the API.
+export interface GcvWord {
+  text: string;
+  conf: number;
+  cx: number;
+  cy: number;
+  h: number;
+  syms: Sym[];
 }
 
 /**
@@ -30,19 +42,37 @@ export const gcvReader: Reader = {
     const pw: number = page?.width || 0;
     const ph: number = page?.height || 0;
 
+    const geom = (bb: any): { cx: number; cy: number; h: number } => {
+      const vertices = bb?.vertices ?? [];
+      const xs = vertices.map((v: any) => v.x ?? 0);
+      const ys = vertices.map((v: any) => v.y ?? 0);
+      const cx = pw ? xs.reduce((a: number, b: number) => a + b, 0) / (xs.length || 1) / pw : 0.5;
+      const cy = ph ? ys.reduce((a: number, b: number) => a + b, 0) / (ys.length || 1) / ph : 0.5;
+      const h = ph && ys.length ? (Math.max(...ys) - Math.min(...ys)) / ph : 0;
+      return { cx, cy, h };
+    };
+
     const symbols: Sym[] = [];
+    const words: GcvWord[] = [];
     for (const block of page?.blocks ?? []) {
       for (const para of block.paragraphs ?? []) {
         for (const word of para.words ?? []) {
+          const syms: Sym[] = [];
           for (const sym of word.symbols ?? []) {
-            const text: string = sym.text ?? "";
-            const vertices = sym.boundingBox?.vertices ?? [];
-            const xs = vertices.map((v: any) => v.x ?? 0);
-            const ys = vertices.map((v: any) => v.y ?? 0);
-            const cx = pw ? (xs.reduce((a: number, b: number) => a + b, 0) / (xs.length || 1)) / pw : 0.5;
-            const cy = ph ? (ys.reduce((a: number, b: number) => a + b, 0) / (ys.length || 1)) / ph : 0.5;
-            symbols.push({ ch: text, conf: typeof sym.confidence === "number" ? sym.confidence : 0, cx, cy });
+            const s: Sym = {
+              ch: sym.text ?? "",
+              conf: typeof sym.confidence === "number" ? sym.confidence : 0,
+              ...geom(sym.boundingBox),
+            };
+            syms.push(s);
+            symbols.push(s);
           }
+          words.push({
+            text: syms.map((s) => s.ch).join(""),
+            conf: typeof word.confidence === "number" ? word.confidence : 0,
+            ...geom(word.boundingBox),
+            syms,
+          });
         }
       }
     }
@@ -64,7 +94,11 @@ export const gcvReader: Reader = {
       const longest = tokens.sort((a: string, z: string) => z.length - a.length)[0] ?? "";
       return {
         code: longest,
-        rawResponse: { text: fta?.text ?? "", note: "band empty; used longest [A-Z0-9] token" },
+        rawResponse: {
+          text: fta?.text ?? "",
+          note: "band empty; used longest [A-Z0-9] token",
+          words,
+        },
         latencyMs,
         costUsd: config.cost.gcvPerImage,
       };
@@ -76,7 +110,12 @@ export const gcvReader: Reader = {
     return {
       code,
       perCharConfidence,
-      rawResponse: { text: fta?.text ?? "", keptSymbols: chosen.length, totalSymbols: symbols.length },
+      rawResponse: {
+        text: fta?.text ?? "",
+        keptSymbols: chosen.length,
+        totalSymbols: symbols.length,
+        words,
+      },
       latencyMs,
       costUsd: config.cost.gcvPerImage,
     };

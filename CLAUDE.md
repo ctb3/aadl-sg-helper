@@ -1,8 +1,22 @@
 # AADL Summer Game — handwriting-extraction bake-off
 
-Measurement harness (not the app) for extracting the handwritten code from
-AADL Summer Game yard-sign photos. Eventual goal: stateless mobile web app on
-AWS that hands the user their code for play.aadl.org.
+Measurement harness (not the app — yet) for extracting the handwritten code
+from AADL Summer Game yard-sign photos.
+
+## End goal (the app this is building toward)
+
+Mobile website on AWS. Target UX: walk up to a sign → tap to open the camera →
+take a picture → the app extracts the code using the pipeline proven here
+(GCV gated → Claude-on-crop → manual prefilled) → auto-submits the code to
+play.aadl.org for the user's account(s) — multiple accounts per user (e.g.
+family) should each get the code.
+
+Open questions for the app phase, not yet investigated: AADL has no public
+API and submission requires a logged-in account, so auto-submit needs a
+session/auth story (which also bends the original "stateless" intent); how
+multi-account submission works; note that a failed submission doubles as the
+validation oracle the bake-off never had — it's the natural tier-escalation
+trigger.
 
 ## The one governing constraint
 

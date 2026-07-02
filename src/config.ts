@@ -58,6 +58,12 @@ export const config = {
   },
 
   labelPort: num("LABEL_PORT", 5178),
+
+  // --- field-test app (src/app) ---
+  appPin: str("APP_PIN", ""),
+  sessionsBucket: str("SESSIONS_BUCKET", ""),
+  // PORT is the Lambda Web Adapter convention; also used locally.
+  appPort: num("PORT", 8080),
 } as const;
 
 export function tokenCost(inTok: number, outTok: number, inPerM: number, outPerM: number): number {

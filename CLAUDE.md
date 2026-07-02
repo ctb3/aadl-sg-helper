@@ -37,6 +37,24 @@ Scoring normalizes case/whitespace (submission is case/space-insensitive).
   entirely offline from `data/cache` (zero API calls, free to iterate).
 - `npx tsx src/tier2.ts` — Claude on a high-res crop at GCV's chosen-line bbox.
 - `npm run preflight` / `npm run typecheck`.
+- `npm run app` — field-test app server at :8080 (same code Lambda runs);
+  `npx tsx infra/apitest.ts [--full] [base-url]` smoke-tests it (`--full` = paid
+  path). `bash infra/deploy.sh` — idempotent deploy (ECR image → Lambda + URL).
+
+## Field-test app (src/app + infra)
+
+v1 app: photo → tier-1 GCV (no spatial band; gate minConf≥0.5) → approve/reject
+→ tier-2 Claude on the GCV-line crop → manual prefilled. No play.aadl.org
+submission yet. Client uploads full-res JPEG straight to S3 via presigned PUT
+(dodges the 6MB Function URL cap, keeps tier-2 crops high-res); every session
+logs photo/crop/results/verdicts under s3://aadl-sg-sessions-…/sessions/ for
+future labeling. Access gate = APP_PIN (.env) checked server-side.
+Deploy account 619467956318 (us-east-2, profile service-aadl-sg-helper; its
+inline `aadl-sg-app-deploy` IAM policy = infra/deploy-user-policy.json).
+Gotchas burned in already: Lambda rejects BuildKit attestation manifests
+(deploy.sh builds with --provenance=false), and the Function URL needed a
+public lambda:InvokeFunction grant besides InvokeFunctionUrl (PIN still holds
+either way).
 
 ## Caching rules (read before re-running anything)
 

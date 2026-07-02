@@ -1,6 +1,11 @@
 node_modules/
 .env
 
+# Deploy-time generated payloads (contain the PIN + GCP key)
+infra/.lambda-env.json
+infra/.role-policy.json
+infra/.ecr-repo-policy.json
+
 # Generated / cached artifacts
 data/prepped/
 data/crops/

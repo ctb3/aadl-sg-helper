@@ -1,0 +1,10 @@
+# Build context guard: host node_modules has Windows sharp binaries; data/ and
+# .env hold private photos/labels/credentials that must never enter the image.
+node_modules
+data
+out
+.env
+.git
+.claude
+infra/.lambda-env.json
+*.md

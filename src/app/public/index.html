@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SG Code Helper</title>
+<style>
+  :root { --fg:#1a1a1a; --muted:#777; --accent:#0a6e3c; --danger:#b3261e; --bg:#f6f5f2; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,sans-serif; color:var(--fg);
+         background:var(--bg); min-height:100dvh; display:flex; flex-direction:column; }
+  main { flex:1; width:100%; max-width:480px; margin:0 auto; padding:1rem;
+         display:flex; flex-direction:column; gap:1rem; }
+  h1 { font-size:1.1rem; margin:0; color:var(--muted); font-weight:600; text-align:center; }
+  .view { display:none; flex-direction:column; gap:1rem; }
+  .view.active { display:flex; }
+  .card { background:#fff; border-radius:14px; padding:1rem; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+  button { font-size:1.05rem; padding:.9rem 1rem; border-radius:12px; border:none;
+           font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  button:active { transform:scale(.98); }
+  .primary { background:var(--accent); color:#fff; }
+  .danger  { background:#fff; color:var(--danger); border:2px solid var(--danger); }
+  .ghost   { background:transparent; color:var(--muted); font-weight:500; }
+  .big     { font-size:1.25rem; padding:1.1rem; }
+  .row { display:flex; gap:.75rem; }
+  .row > button { flex:1; }
+  .code { font-family:ui-monospace,Menlo,monospace; font-size:2.2rem; letter-spacing:.12em;
+          text-align:center; word-break:break-all; padding:.5rem 0; }
+  .crop { width:100%; border-radius:10px; border:1px solid #ddd; background:#fff; }
+  .tag { font-size:.75rem; color:var(--muted); text-align:center; }
+  .spin { width:34px; height:34px; margin:1.5rem auto; border:4px solid #ddd;
+          border-top-color:var(--accent); border-radius:50%; animation:r 0.8s linear infinite; }
+  @keyframes r { to { transform:rotate(360deg); } }
+  .busy-msg { text-align:center; color:var(--muted); }
+  input[type=text], input[type=password] {
+    font-size:1.4rem; padding:.7rem; width:100%; border-radius:10px; border:1px solid #ccc;
+    font-family:ui-monospace,Menlo,monospace; text-transform:uppercase; text-align:center; }
+  .alts { display:flex; flex-wrap:wrap; gap:.5rem; justify-content:center; }
+  .alts button { font-family:ui-monospace,Menlo,monospace; background:#eee; padding:.5rem .8rem; }
+  .err { color:var(--danger); text-align:center; }
+  a { color:var(--accent); }
+</style>
+<body>
+<main>
+  <h1>AADL Summer Game — code helper</h1>
+
+  <div class="view" id="v-pin">
+    <div class="card">
+      <p>Enter the access PIN:</p>
+      <input type="password" id="pin-input" autocomplete="off" inputmode="text">
+      <p class="err" id="pin-err" hidden>PIN rejected — try again.</p>
+    </div>
+    <button class="primary big" id="pin-save">Continue</button>
+  </div>
+
+  <div class="view" id="v-home">
+    <button class="primary big" id="btn-photo">&#128247; Photograph a sign</button>
+    <input type="file" id="file" accept="image/*" capture="environment" hidden>
+    <p class="tag">Aim so the handwritten code fills a good chunk of the frame.</p>
+  </div>
+
+  <div class="view" id="v-busy">
+    <div class="spin"></div>
+    <p class="busy-msg" id="busy-msg">Working…</p>
+  </div>
+
+  <div class="view" id="v-result">
+    <img class="crop" id="r-crop" alt="detected code region">
+    <div class="card">
+      <div class="code" id="r-code"></div>
+      <p class="tag" id="r-tag"></p>
+    </div>
+    <div class="row">
+      <button class="danger" id="r-reject">&#10007; Wrong</button>
+      <button class="primary" id="r-approve">&#10003; Correct</button>
+    </div>
+    <button class="ghost" id="r-restart">Start over</button>
+  </div>
+
+  <div class="view" id="v-manual">
+    <img class="crop" id="m-crop" alt="detected code region">
+    <div class="card">
+      <p>Type the code as written:</p>
+      <input type="text" id="m-input" autocomplete="off" autocapitalize="characters" maxlength="16">
+      <div class="alts" id="m-alts"></div>
+    </div>
+    <button class="primary big" id="m-submit">Use this code</button>
+    <button class="ghost" id="m-restart">Start over</button>
+  </div>
+
+  <div class="view" id="v-done">
+    <div class="card">
+      <p class="tag">Your code</p>
+      <div class="code" id="d-code"></div>
+    </div>
+    <button class="primary big" id="d-copy">Copy code</button>
+    <p style="text-align:center"><a href="https://play.aadl.org" target="_blank" rel="noopener">Enter it at play.aadl.org &rarr;</a></p>
+    <button class="ghost" id="d-new">&#128247; New photo</button>
+  </div>
+
+  <div class="view" id="v-error">
+    <p class="err" id="e-msg"></p>
+    <button class="primary big" id="e-retry">Start over</button>
+  </div>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const norm = (s) => (s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+let state = null;
+
+function show(view, busyMsg) {
+  document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+  $(view).classList.add("active");
+  if (busyMsg) $("busy-msg").textContent = busyMsg;
+}
+
+function fail(err) {
+  console.error(err);
+  if (err && err.pinRejected) return; // already showing the PIN view
+  $("e-msg").textContent = String((err && err.message) || err);
+  show("v-error");
+}
+
+function home() { state = null; $("file").value = ""; show("v-home"); }
+
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-app-pin": localStorage.getItem("pin") || "" },
+    body: JSON.stringify(body || {}),
+  });
+  if (r.status === 401) {
+    localStorage.removeItem("pin");
+    $("pin-err").hidden = false;
+    show("v-pin");
+    throw { pinRejected: true };
+  }
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.error || "HTTP " + r.status);
+  }
+  return r.json();
+}
+
+// Re-encode client-side: uniform JPEG (HEIC-proof for sharp), EXIF orientation
+// baked in by the browser decode, full detail kept for the tier-2 crop.
+async function toJpeg(file) {
+  let img;
+  try { img = await createImageBitmap(file); }
+  catch {
+    img = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = () => rej(new Error("could not decode the photo"));
+      i.src = URL.createObjectURL(file);
+    });
+  }
+  const scale = Math.min(1, 4032 / Math.max(img.width, img.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(img.width * scale);
+  c.height = Math.round(img.height * scale);
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.92));
+  if (!blob) throw new Error("could not encode the photo");
+  return blob;
+}
+
+function presentResult(tier, code, conf) {
+  state.presented = { tier, code };
+  $("r-crop").src = state.cropDataUrl;
+  $("r-code").textContent = code || "(nothing read)";
+  $("r-tag").textContent =
+    (tier === 1 ? "Instant read (GCV)" : "Model read (Claude)") +
+    (conf != null ? " · worst-glyph conf " + conf.toFixed(2) : "");
+  show("v-result");
+}
+
+function showManual() {
+  const prefill = (state.tier2 && state.tier2.code) || state.tier1.code || "";
+  $("m-crop").src = state.cropDataUrl;
+  $("m-input").value = prefill;
+  const alts = (state.tier2 && state.tier2.alternatives) || [];
+  $("m-alts").replaceChildren(...alts.filter((a) => norm(a) && norm(a) !== norm(prefill)).map((a) => {
+    const b = document.createElement("button");
+    b.textContent = norm(a);
+    b.onclick = () => { $("m-input").value = norm(a); };
+    return b;
+  }));
+  show("v-manual");
+}
+
+async function onPhoto(file) {
+  try {
+    state = { t0: Date.now(), verdicts: [] };
+    show("v-busy", "Preparing photo…");
+    const jpeg = await toJpeg(file);
+
+    const s = await api("/api/session");
+    state.sessionId = s.sessionId;
+
+    show("v-busy", "Uploading…");
+    const up = await fetch(s.uploadUrl, {
+      method: "PUT", headers: { "content-type": "image/jpeg" }, body: jpeg,
+    });
+    if (!up.ok) throw new Error("upload failed (HTTP " + up.status + ")");
+
+    show("v-busy", "Reading the sign…");
+    const res = await api("/api/extract", { sessionId: state.sessionId });
+    state.tier1 = res.tier1;
+    state.tier2 = res.tier2;
+    state.cropDataUrl = res.cropDataUrl;
+
+    if (res.tier1.gatePassed) {
+      presentResult(1, res.tier1.code, res.tier1.minConf);
+    } else {
+      state.verdicts.push({ tier: 1, code: res.tier1.code, minConf: res.tier1.minConf, action: "auto_skipped_gate" });
+      presentResult(2, res.tier2.code);
+    }
+  } catch (err) { fail(err); }
+}
+
+async function reject() {
+  const { tier, code } = state.presented;
+  state.verdicts.push({ tier, code, action: "rejected" });
+  try {
+    if (tier === 1) {
+      show("v-busy", "Asking Claude for a closer look…");
+      const r = await api("/api/escalate", { sessionId: state.sessionId });
+      state.tier2 = r.tier2;
+      presentResult(2, r.tier2.code);
+    } else {
+      showManual();
+    }
+  } catch (err) { fail(err); }
+}
+
+async function finish(code, source) {
+  try {
+    show("v-busy", "Saving…");
+    await api("/api/verdict", {
+      sessionId: state.sessionId,
+      record: { verdicts: state.verdicts, finalCode: code, source, clientMs: Date.now() - state.t0 },
+    });
+    $("d-code").textContent = code;
+    show("v-done");
+  } catch (err) { fail(err); }
+}
+
+// ---- wiring ----
+$("pin-save").onclick = () => {
+  const v = $("pin-input").value.trim();
+  if (!v) return;
+  localStorage.setItem("pin", v);
+  $("pin-input").value = "";
+  home();
+};
+$("btn-photo").onclick = () => $("file").click();
+$("file").onchange = (e) => { if (e.target.files[0]) onPhoto(e.target.files[0]); };
+
+$("r-approve").onclick = () => {
+  const { tier, code } = state.presented;
+  state.verdicts.push({ tier, code, action: "approved" });
+  finish(code, "tier" + tier);
+};
+$("r-reject").onclick = reject;
+$("m-submit").onclick = () => {
+  const code = norm($("m-input").value);
+  if (!code) return;
+  state.verdicts.push({ tier: 3, code, action: "manual_entry" });
+  finish(code, "manual");
+};
+$("d-copy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("d-code").textContent); $("d-copy").textContent = "Copied ✓"; }
+  catch { /* clipboard denied; user can long-press */ }
+};
+$("d-new").onclick = home;
+$("r-restart").onclick = home;
+$("m-restart").onclick = home;
+$("e-retry").onclick = home;
+
+localStorage.getItem("pin") ? home() : show("v-pin");
+</script>
+</body>
+</html>

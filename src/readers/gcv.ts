@@ -2,7 +2,11 @@ import vision from "@google-cloud/vision";
 import { config } from "../config";
 import type { Arm, Reader, ReaderResult } from "../types";
 
-const client = new vision.ImageAnnotatorClient();
+// Lambda has no key file on disk, so the app deploy passes the service-account
+// key inline; locally GOOGLE_APPLICATION_CREDENTIALS (a path) keeps working.
+const client = process.env.GCP_SA_KEY_JSON
+  ? new vision.ImageAnnotatorClient({ credentials: JSON.parse(process.env.GCP_SA_KEY_JSON) })
+  : new vision.ImageAnnotatorClient();
 
 interface Sym {
   ch: string;

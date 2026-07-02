@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { modelTag, sanitize } from "./cachekey";
 import { config } from "./config";
 import { downscaleToLongestEdge, cropWithPadding } from "./image";
 import { localize, type LocalizeResult } from "./localizer";
@@ -55,24 +56,6 @@ function readLabels(): GroundTruth[] {
     out.push({ filename, code });
   }
   return out;
-}
-
-function sanitize(name: string): string {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_");
-}
-
-/**
- * Cache-key suffix identifying the models behind a prediction, so swapping a
- * model ID in .env doesn't silently reuse results from the old model. Reader
- * model for LLM readers; localizer model too on the model_crop arm, since the
- * crop itself depends on it. Textract/GCV have no reader-model choice.
- */
-function modelTag(reader: ReaderName, arm: Arm): string {
-  let tag = "";
-  if (reader === "claude") tag += "__" + sanitize(config.claudeModel);
-  if (reader === "nova") tag += "__" + sanitize(config.novaModel);
-  if (arm === "model_crop") tag += "__loc-" + sanitize(config.localizerModel);
-  return tag;
 }
 
 function ensureDir(p: string): void {

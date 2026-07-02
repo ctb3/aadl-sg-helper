@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { modelTag, sanitize } from "./cachekey";
 import { config } from "./config";
 import { cer, normalize } from "./score";
 import {
@@ -39,10 +40,6 @@ function readLabels(): GroundTruth[] {
     out.push({ filename, code });
   }
   return out;
-}
-
-function sanitize(name: string): string {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
 function loadCache(filename: string, reader: string, modelTag = ""): any | null {
@@ -221,7 +218,7 @@ function main(): void {
   // Full cascade simulation: tier 1 = GCV+Textract combined (accept on string
   // agreement), tier 2 = Claude full photo (cached), tier 3 = manual with the
   // best guess prefilled. Uses cached Claude answers — no API calls.
-  const claudeTag = "__" + sanitize(config.claudeModel);
+  const claudeTag = modelTag("claude", "none");
   out.push(``);
   out.push(`## Cascade simulation: GCV×Textract agreement → Claude → manual`);
   out.push(``);
@@ -230,9 +227,16 @@ function main(): void {
   let tier1 = 0,
     tier1Ok = 0,
     tier2 = 0,
-    tier2Ok = 0;
+    tier2Ok = 0,
+    claudeAlone = 0,
+    claudeAloneOk = 0;
   for (const r of both) {
     const t = byFile.get(r.filename)!;
+    const soloClaude = loadCache(r.filename, "claude", claudeTag);
+    if (soloClaude) {
+      claudeAlone++;
+      if (normalize(soloClaude.code ?? "") === r.truth) claudeAloneOk++;
+    }
     const gcvCode = normalize(r.result.code);
     if (gcvCode && gcvCode === normalize(t.result.code)) {
       tier1++;
@@ -253,7 +257,8 @@ function main(): void {
     `Tier 1 resolves ${tier1}/${n} (${((tier1 / n) * 100).toFixed(0)}%) at ~$0.003/img, ` +
       `${tier1Ok}/${tier1} correct. Tier 2 handles ${tier2} escalations, ${tier2Ok}/${tier2} correct. ` +
       `**End-to-end: ${tier1Ok + tier2Ok}/${n} (${(((tier1Ok + tier2Ok) / n) * 100).toFixed(1)}%)** ` +
-      `vs Claude-alone 29/31 (93.5%). Remaining misses fall through to tier 3 (manual, prefilled).`,
+      `vs Claude-alone ${claudeAloneOk}/${claudeAlone} (${((claudeAloneOk / (claudeAlone || 1)) * 100).toFixed(1)}%). ` +
+      `Remaining misses fall through to tier 3 (manual, prefilled).`,
   );
 
   const report = out.join("\n");

@@ -20,7 +20,17 @@ export const READER_USER =
   "guaranteed pronounceable. Do NOT 'correct' it toward any real or plausible " +
   "word. Transcribe each glyph literally, exactly as drawn, even if the result " +
   "looks like nonsense.\n" +
-  "- If a glyph is genuinely ambiguous, pick your single best LITERAL reading " +
+  "- People often DOODLE small drawings next to or around the code (a baseball, " +
+  "heart, star, smiley, underline). Drawings are NOT characters — do not " +
+  "transcribe them. In particular, a round shape with interior detail (stitch " +
+  "marks, a face, a pattern) is a drawing, not an O or 0.\n" +
+  "- Signs are reused every year and old codes get cleaned off. You may see " +
+  "faint GHOST strokes of a previous code. Transcribe only the bold, " +
+  "high-contrast current lettering; ignore faint remnants.\n" +
+  "- If a glyph is genuinely ambiguous (e.g. M vs N, U vs V, 5 vs S, 0 vs O), " +
+  "compare it against how this writer formed the same letters elsewhere in the " +
+  "code — writers are consistent. Decide on letterFORM evidence only, never on " +
+  "which reading makes a nicer word. Pick your single best LITERAL reading " +
   "for `code`, and list other plausible literal readings of the FULL code in " +
   "`alternatives`.\n" +
   "Return ONLY strict JSON, no prose and no markdown fences:\n" +

@@ -1,3 +1,4 @@
+import type { GcvWord } from "./readers/gcv";
 import { levenshtein } from "./score";
 
 /**
@@ -17,6 +18,7 @@ export interface Line {
   h: number; // normalized mean glyph height
   cy: number; // normalized vertical center (for ordering)
   confs: number[]; // per-char confidence for the alphanumeric chars
+  bbox: { x0: number; y0: number; x1: number; y1: number }; // normalized extent
 }
 
 export interface StrategyResult {
@@ -30,6 +32,7 @@ export interface WordLike {
   cy: number;
   h: number; // normalized glyph height (word bbox, NOT line bbox — line boxes
   // around the curved ring text are inflated and break height ranking)
+  w: number; // normalized word width
   confs: number[]; // per-char confidence for the alphanumeric chars
 }
 
@@ -67,6 +70,12 @@ export function groupIntoLines(words: WordLike[]): Line[] {
       h: hs.reduce((x, y) => x + y, 0) / hs.length,
       cy: a.cy,
       confs: ws.flatMap((w) => w.confs),
+      bbox: {
+        x0: Math.min(...ws.map((w) => w.cx - w.w / 2)),
+        x1: Math.max(...ws.map((w) => w.cx + w.w / 2)),
+        y0: Math.min(...ws.map((w) => w.cy - w.h / 2)),
+        y1: Math.max(...ws.map((w) => w.cy + w.h / 2)),
+      },
     };
   });
 }
@@ -186,4 +195,55 @@ export function phraseSubtract(lines: Line[]): StrategyResult {
 /** Subtract known printed copy, then take the tallest survivor. */
 export function combined(lines: Line[]): StrategyResult {
   return tallestLine(lines.filter((l) => !isPrintedLine(l.text)));
+}
+
+// ---------- reader adapters: cached raw response → Line[] ----------
+
+export function gcvLines(words: GcvWord[]): Line[] {
+  return groupIntoLines(
+    words.map((w) => {
+      // Glyph height from symbol boxes, not the word box: an axis-aligned box
+      // around a whole tilted word is inflated by the tilt; single-glyph boxes
+      // barely are. (Matters for the curved ring text on rotated photos.)
+      const symHs = w.syms.map((s) => s.h).filter((h) => h > 0);
+      return {
+        text: w.text,
+        cx: w.cx,
+        cy: w.cy,
+        h: symHs.length ? symHs.reduce((a, b) => a + b, 0) / symHs.length : w.h,
+        w: w.w ?? 0,
+        confs: w.syms.filter((s) => /[A-Za-z0-9]/.test(s.ch)).map((s) => s.conf),
+      };
+    }),
+  );
+}
+
+/** Build lines from Textract WORD blocks (word bbox height ≈ glyph height; the
+ * LINE blocks' boxes span the curved ring text and have inflated heights). */
+export function textractLines(blocks: any[]): Line[] {
+  const words = (blocks ?? [])
+    .filter((b: any) => b.BlockType === "WORD" && (b.Text ?? "").trim())
+    .map((b: any) => {
+      const bb = b.Geometry?.BoundingBox ?? {};
+      const text: string = b.Text ?? "";
+      const conf = (b.Confidence ?? 0) / 100;
+      return {
+        text,
+        cx: (bb.Left ?? 0) + (bb.Width ?? 0) / 2,
+        cy: (bb.Top ?? 0) + (bb.Height ?? 0) / 2,
+        h: bb.Height ?? 0,
+        w: bb.Width ?? 0,
+        confs: alnum(text)
+          .split("")
+          .map(() => conf),
+      };
+    });
+  return groupIntoLines(words);
+}
+
+/** The Line the combined strategy would pick (for crop geometry), or null. */
+export function combinedLine(lines: Line[]): Line | null {
+  const survivors = lines.filter((l) => !isPrintedLine(l.text) && alnum(l.text).length > 0);
+  if (survivors.length === 0) return null;
+  return survivors.reduce((a, b) => (b.h > a.h ? b : a));
 }

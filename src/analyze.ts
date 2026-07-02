@@ -6,13 +6,12 @@ import { cer, normalize } from "./score";
 import {
   alnum,
   combined,
-  groupIntoLines,
+  gcvLines,
   phraseSubtract,
   tallestLine,
-  type Line,
+  textractLines,
   type StrategyResult,
 } from "./postproc";
-import type { GcvWord } from "./readers/gcv";
 
 /**
  * Offline post-processing bake-off: re-scores the geometry-aware engines
@@ -49,46 +48,6 @@ function loadCache(filename: string, reader: string, modelTag = ""): any | null 
 }
 
 // ---------- adapters: cached raw response → Line[] ----------
-
-function gcvLines(words: GcvWord[]): Line[] {
-  return groupIntoLines(
-    words.map((w) => {
-      // Glyph height from symbol boxes, not the word box: an axis-aligned box
-      // around a whole tilted word is inflated by the tilt; single-glyph boxes
-      // barely are. (Matters for the curved ring text on rotated photos.)
-      const symHs = w.syms.map((s) => s.h).filter((h) => h > 0);
-      return {
-        text: w.text,
-        cx: w.cx,
-        cy: w.cy,
-        h: symHs.length ? symHs.reduce((a, b) => a + b, 0) / symHs.length : w.h,
-        confs: w.syms.filter((s) => /[A-Za-z0-9]/.test(s.ch)).map((s) => s.conf),
-      };
-    }),
-  );
-}
-
-/** Build lines from WORD blocks (word bbox height ≈ glyph height; the LINE
- * blocks' boxes span the curved ring text and have inflated heights). */
-function textractLines(blocks: any[]): Line[] {
-  const words = (blocks ?? [])
-    .filter((b: any) => b.BlockType === "WORD" && (b.Text ?? "").trim())
-    .map((b: any) => {
-      const bb = b.Geometry?.BoundingBox ?? {};
-      const text: string = b.Text ?? "";
-      const conf = (b.Confidence ?? 0) / 100;
-      return {
-        text,
-        cx: (bb.Left ?? 0) + (bb.Width ?? 0) / 2,
-        cy: (bb.Top ?? 0) + (bb.Height ?? 0) / 2,
-        h: bb.Height ?? 0,
-        confs: alnum(text)
-          .split("")
-          .map(() => conf),
-      };
-    });
-  return groupIntoLines(words);
-}
 
 /** Baseline: Textract's HANDWRITING-tagged words (what the main bake measured). */
 function textractHandwriting(blocks: any[]): StrategyResult {
@@ -139,7 +98,7 @@ function main(): void {
   const add = (name: string, row: Row) => (strategies[name] ??= []).push(row);
 
   for (const gt of labels) {
-    const gcvCache = loadCache(gt.filename, "gcv");
+    const gcvCache = loadCache(gt.filename, "gcv", modelTag("gcv", "none"));
     const txtCache = loadCache(gt.filename, "textract");
 
     if (gcvCache?.rawResponse?.words) {
@@ -215,50 +174,133 @@ function main(): void {
       `accuracy when agreeing: ${agree.length ? ((agreeOk / agree.length) * 100).toFixed(0) : "—"}% (${agreeOk}/${agree.length}).`,
   );
 
-  // Full cascade simulation: tier 1 = GCV+Textract combined (accept on string
-  // agreement), tier 2 = Claude full photo (cached), tier 3 = manual with the
-  // best guess prefilled. Uses cached Claude answers — no API calls.
+  // Cascade simulation comparing tier-1 policies. Pipeline: tier 1 (cheap OCR)
+  // → tier 2 (Claude full photo, cached) → tier 3 (manual, prefilled).
+  //
+  // The key UX difference between policies: when tier 1 emits an answer with
+  // no gate, a wrong answer is only discovered when the user's submission
+  // FAILS at play.aadl.org (one bad round trip, then escalate to Claude). A
+  // gate (confidence / agreement) escalates BEFORE the user submits, at the
+  // price of more Claude calls. So we track "wrong prefills" separately.
   const claudeTag = modelTag("claude", "none");
-  out.push(``);
-  out.push(`## Cascade simulation: GCV×Textract agreement → Claude → manual`);
-  out.push(``);
-  out.push(`| Image | Tier | Answer | ✓ |`);
-  out.push(`| --- | --- | --- | --- |`);
-  let tier1 = 0,
-    tier1Ok = 0,
-    tier2 = 0,
-    tier2Ok = 0,
-    claudeAlone = 0,
-    claudeAloneOk = 0;
+  const claudeByFile = new Map<string, { code: string; costUsd: number }>();
+  const claudeCropByFile = new Map<string, string>(); // tier2 via GCV-line crop (src/tier2.ts)
   for (const r of both) {
-    const t = byFile.get(r.filename)!;
-    const soloClaude = loadCache(r.filename, "claude", claudeTag);
-    if (soloClaude) {
-      claudeAlone++;
-      if (normalize(soloClaude.code ?? "") === r.truth) claudeAloneOk++;
-    }
-    const gcvCode = normalize(r.result.code);
-    if (gcvCode && gcvCode === normalize(t.result.code)) {
-      tier1++;
-      if (r.exact) tier1Ok++;
-      out.push(`| ${r.filename} | 1 (agree) | ${gcvCode} | ${r.exact ? "✓" : "✗"} |`);
-    } else {
-      const claude = loadCache(r.filename, "claude", claudeTag);
-      const code = normalize(claude?.code ?? "");
-      const ok = code === r.truth;
-      tier2++;
-      if (ok) tier2Ok++;
-      out.push(`| ${r.filename} | 2 (claude) | ${code} | ${ok ? "✓" : "✗"} |`);
+    const c = loadCache(r.filename, "claude", claudeTag);
+    if (c) claudeByFile.set(r.filename, { code: normalize(c.code ?? ""), costUsd: c.costUsd ?? 0 });
+    const cropPath = path.join(
+      config.cacheDir,
+      `${sanitize(r.filename)}__claude__gcvcrop${claudeTag}${modelTag("gcv", "none")}.json`,
+    );
+    if (fs.existsSync(cropPath)) {
+      const cc = JSON.parse(fs.readFileSync(cropPath, "utf8"));
+      claudeCropByFile.set(r.filename, normalize(cc.code ?? ""));
     }
   }
-  const n = both.length;
+  const claudeCost = [...claudeByFile.values()].reduce((s, c) => s + c.costUsd, 0) /
+    Math.max(1, claudeByFile.size);
+
+  const GCV_COST = config.cost.gcvPerImage;
+  const TXT_COST = config.cost.textractPerPage;
+  const LAT = { gcv: 0.4, textract: 1.6, claude: 2.6 }; // seconds, measured means
+
+  interface Policy {
+    name: string;
+    tier1Cost: number;
+    tier1Lat: number;
+    // returns tier-1 answer to show the user, or null to escalate immediately
+    answer: (gcv: Row, txt: Row) => string | null;
+  }
+  const policies: Policy[] = [
+    {
+      name: "gcv alone",
+      tier1Cost: GCV_COST,
+      tier1Lat: LAT.gcv,
+      answer: (g) => normalize(g.result.code) || null,
+    },
+    {
+      name: "textract alone",
+      tier1Cost: TXT_COST,
+      tier1Lat: LAT.textract,
+      answer: (_, t) => normalize(t.result.code) || null,
+    },
+    {
+      name: "gcv, minConf ≥ 0.5 gate",
+      tier1Cost: GCV_COST,
+      tier1Lat: LAT.gcv,
+      answer: (g) =>
+        (g.result.minConf ?? -1) >= 0.5 ? normalize(g.result.code) || null : null,
+    },
+    {
+      name: "gcv×textract agreement gate",
+      tier1Cost: GCV_COST + TXT_COST,
+      tier1Lat: Math.max(LAT.gcv, LAT.textract), // parallel calls
+      answer: (g, t) => {
+        const a = normalize(g.result.code);
+        return a && a === normalize(t.result.code) ? a : null;
+      },
+    },
+  ];
+
+  out.push(``);
+  out.push(`## Cascade simulation — tier-1 policy → Claude → manual`);
   out.push(``);
   out.push(
-    `Tier 1 resolves ${tier1}/${n} (${((tier1 / n) * 100).toFixed(0)}%) at ~$0.003/img, ` +
-      `${tier1Ok}/${tier1} correct. Tier 2 handles ${tier2} escalations, ${tier2Ok}/${tier2} correct. ` +
-      `**End-to-end: ${tier1Ok + tier2Ok}/${n} (${(((tier1Ok + tier2Ok) / n) * 100).toFixed(1)}%)** ` +
-      `vs Claude-alone ${claudeAloneOk}/${claudeAlone} (${((claudeAloneOk / (claudeAlone || 1)) * 100).toFixed(1)}%). ` +
-      `Remaining misses fall through to tier 3 (manual, prefilled).`,
+    `"Wrong prefill" = tier 1 answered wrong with no gate to catch it, so the user ` +
+      `discovers it via a failed submission, then escalates. End-to-end assumes ` +
+      `every tier-1 miss eventually reaches Claude (mean Claude cost $${claudeCost.toFixed(4)}/img).`,
+  );
+  out.push(``);
+  out.push(
+    `| Tier-1 policy | instant answer | wrong prefill | Claude calls | end-to-end (full) | end-to-end (crop) | est. cost/img | tier-1 latency |`,
+  );
+  out.push(`| --- | --- | --- | --- | --- | --- | --- | --- |`);
+  for (const p of policies) {
+    let instant = 0,
+      wrongPrefill = 0,
+      claudeCalls = 0,
+      endOk = 0,
+      endOkCrop = 0;
+    for (const r of both) {
+      const t = byFile.get(r.filename)!;
+      const ans = p.answer(r, t);
+      const claude = claudeByFile.get(r.filename);
+      const crop = claudeCropByFile.get(r.filename);
+      if (ans !== null && ans === r.truth) {
+        instant++;
+        endOk++;
+        endOkCrop++;
+      } else {
+        if (ans !== null) {
+          instant++;
+          wrongPrefill++; // rescued only after the failed submission
+        }
+        claudeCalls++;
+        if (claude?.code === r.truth) endOk++;
+        if (crop === r.truth) endOkCrop++;
+      }
+    }
+    const n2 = both.length;
+    const cost = p.tier1Cost + (claudeCalls / n2) * claudeCost;
+    out.push(
+      `| ${p.name} | ${((instant / n2) * 100).toFixed(0)}% (${instant}/${n2}) | ` +
+        `${((wrongPrefill / n2) * 100).toFixed(0)}% (${wrongPrefill}) | ` +
+        `${((claudeCalls / n2) * 100).toFixed(0)}% | ` +
+        `${((endOk / n2) * 100).toFixed(1)}% (${endOk}/${n2}) | ` +
+        `${claudeCropByFile.size ? ((endOkCrop / n2) * 100).toFixed(1) + "% (" + endOkCrop + "/" + n2 + ")" : "—"} | ` +
+        `$${cost.toFixed(4)} | ${p.tier1Lat.toFixed(1)}s |`,
+    );
+  }
+  out.push(``);
+  out.push(
+    `"end-to-end (crop)" = tier 2 reads a high-res crop of the original photo at ` +
+      `GCV's tier-1 line bbox (src/tier2.ts) instead of the ${config.maxEdge}px full photo.`,
+  );
+  const claudeAloneOk = both.filter((r) => claudeByFile.get(r.filename)?.code === r.truth).length;
+  out.push(``);
+  out.push(
+    `Claude-alone reference: ${claudeAloneOk}/${both.length} ` +
+      `(${((claudeAloneOk / (both.length || 1)) * 100).toFixed(1)}%) at $${claudeCost.toFixed(4)}/img, ~${LAT.claude.toFixed(1)}s.`,
   );
 
   const report = out.join("\n");

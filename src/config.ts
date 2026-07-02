@@ -34,6 +34,9 @@ export const config = {
   outDir: resolve("out/runs"),
 
   maxEdge: num("MAX_EDGE", 1500),
+  // GCV bills per image regardless of size, and its glyph reading is the
+  // resolution-bound step — so it gets its own (higher) downscale target.
+  gcvMaxEdge: num("GCV_MAX_EDGE", 2400),
   cropPaddingPct: num("CROP_PADDING_PCT", 0.15),
 
   gcvBand: {

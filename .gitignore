@@ -10,3 +10,4 @@ out/
 # Test data (photos + hand labels are local, potentially private)
 data/images/
 data/labels.csv
+data/manual cropped/

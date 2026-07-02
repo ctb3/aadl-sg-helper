@@ -10,6 +10,7 @@ interface Sym {
   cx: number; // normalized center x
   cy: number; // normalized center y
   h: number; // normalized glyph height
+  w: number; // normalized glyph width
 }
 
 // Persisted in rawResponse so post-processing strategies (height filters,
@@ -20,6 +21,7 @@ export interface GcvWord {
   cx: number;
   cy: number;
   h: number;
+  w: number;
   syms: Sym[];
 }
 
@@ -42,14 +44,15 @@ export const gcvReader: Reader = {
     const pw: number = page?.width || 0;
     const ph: number = page?.height || 0;
 
-    const geom = (bb: any): { cx: number; cy: number; h: number } => {
+    const geom = (bb: any): { cx: number; cy: number; h: number; w: number } => {
       const vertices = bb?.vertices ?? [];
       const xs = vertices.map((v: any) => v.x ?? 0);
       const ys = vertices.map((v: any) => v.y ?? 0);
       const cx = pw ? xs.reduce((a: number, b: number) => a + b, 0) / (xs.length || 1) / pw : 0.5;
       const cy = ph ? ys.reduce((a: number, b: number) => a + b, 0) / (ys.length || 1) / ph : 0.5;
       const h = ph && ys.length ? (Math.max(...ys) - Math.min(...ys)) / ph : 0;
-      return { cx, cy, h };
+      const w = pw && xs.length ? (Math.max(...xs) - Math.min(...xs)) / pw : 0;
+      return { cx, cy, h, w };
     };
 
     const symbols: Sym[] = [];

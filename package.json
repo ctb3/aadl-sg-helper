@@ -1,0 +1,27 @@
+{
+  "name": "aadl-sg-helper",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Handwriting-extraction bake-off harness for AADL Summer Game sign codes",
+  "scripts": {
+    "label": "tsx src/label.ts",
+    "preflight": "tsx src/preflight.ts",
+    "smoke": "tsx src/run.ts --limit 1",
+    "bake": "tsx src/run.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.700.0",
+    "@aws-sdk/client-textract": "^3.700.0",
+    "@google-cloud/vision": "^4.3.2",
+    "dotenv": "^16.4.5",
+    "sharp": "^0.33.5"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-bedrock": "^3.1078.0",
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

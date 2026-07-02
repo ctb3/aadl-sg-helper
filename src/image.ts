@@ -1,0 +1,55 @@
+import sharp from "sharp";
+import type { BBox } from "./types";
+
+export interface Dims {
+  width: number;
+  height: number;
+}
+
+export async function dims(buf: Buffer): Promise<Dims> {
+  const m = await sharp(buf).metadata();
+  return { width: m.width ?? 0, height: m.height ?? 0 };
+}
+
+/** Downscale so the longest edge is <= maxEdge, re-encode as JPEG. */
+export async function downscaleToLongestEdge(buf: Buffer, maxEdge: number): Promise<Buffer> {
+  return sharp(buf)
+    .rotate() // respect EXIF orientation
+    .resize(maxEdge, maxEdge, { fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+}
+
+/** Crop `buf` to `bbox` (normalized) expanded by paddingPct of the bbox size. */
+export async function cropWithPadding(buf: Buffer, bbox: BBox, paddingPct: number): Promise<Buffer> {
+  const rotated = await sharp(buf).rotate().toBuffer();
+  const { width, height } = await dims(rotated);
+  if (!width || !height) return downscaleToLongestEdge(rotated, 1500);
+
+  const x0 = Math.min(bbox.x0, bbox.x1);
+  const x1 = Math.max(bbox.x0, bbox.x1);
+  const y0 = Math.min(bbox.y0, bbox.y1);
+  const y1 = Math.max(bbox.y0, bbox.y1);
+
+  const padX = (x1 - x0) * paddingPct;
+  const padY = (y1 - y0) * paddingPct;
+
+  const left = clamp01(x0 - padX);
+  const top = clamp01(y0 - padY);
+  const right = clamp01(x1 + padX);
+  const bottom = clamp01(y1 + padY);
+
+  const pxLeft = Math.floor(left * width);
+  const pxTop = Math.floor(top * height);
+  const pxW = Math.max(1, Math.min(width - pxLeft, Math.ceil((right - left) * width)));
+  const pxH = Math.max(1, Math.min(height - pxTop, Math.ceil((bottom - top) * height)));
+
+  return sharp(rotated)
+    .extract({ left: pxLeft, top: pxTop, width: pxW, height: pxH })
+    .jpeg({ quality: 92 })
+    .toBuffer();
+}
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}

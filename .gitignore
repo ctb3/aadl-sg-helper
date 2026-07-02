@@ -1,0 +1,12 @@
+node_modules/
+.env
+
+# Generated / cached artifacts
+data/prepped/
+data/crops/
+data/cache/
+out/
+
+# Test data (photos + hand labels are local, potentially private)
+data/images/
+data/labels.csv

@@ -61,6 +61,8 @@ export const config = {
 
   // --- field-test app (src/app) ---
   appPin: str("APP_PIN", ""),
+  // Summer Game submission target; overridable for testing against a mirror.
+  aadlBaseUrl: str("AADL_BASE_URL", "https://aadl.org"),
   sessionsBucket: str("SESSIONS_BUCKET", ""),
   // PORT is the Lambda Web Adapter convention; also used locally.
   appPort: num("PORT", 8080),

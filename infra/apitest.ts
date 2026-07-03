@@ -42,6 +42,15 @@ async function main(): Promise<void> {
   check("session created", s.status === 200 && !!s.json.uploadUrl, `id=${s.json.sessionId}`);
   if (s.status !== 200) return;
 
+  // Submission endpoints: validation only — no live aadl.org traffic here
+  // (that's infra/aadltest.ts, run manually).
+  const noCreds = await api("/api/aadl/connect", { username: "x" });
+  check("connect without password rejected", noCreds.status === 400, `status=${noCreds.status}`);
+  const noAccts = await api("/api/submit", { sessionId: s.json.sessionId, code: "ABC123", accounts: [] });
+  check("submit without accounts rejected", noAccts.status === 400, `status=${noAccts.status}`);
+  const badCode = await api("/api/submit", { sessionId: s.json.sessionId, code: "", accounts: [{ cookies: "{}" }] });
+  check("submit with empty code rejected", badCode.status === 400, `status=${badCode.status}`);
+
   if (!process.argv.includes("--full")) {
     console.log("(pass --full to run the paid upload/extract/escalate path)");
     return;

@@ -38,6 +38,21 @@
   .alts button { font-family:ui-monospace,Menlo,monospace; background:#eee; padding:.5rem .8rem; }
   .err { color:var(--danger); text-align:center; }
   a { color:var(--accent); }
+  /* AADL accounts + submission results */
+  .cred input { text-transform:none; font-family:inherit; font-size:1.05rem; text-align:left; }
+  .acct { border-top:1px solid #eee; padding:.6rem 0; font-size:.95rem; }
+  .acct:first-child { border-top:none; }
+  .acct-head { display:flex; justify-content:space-between; align-items:center; }
+  .acct button { font-size:.8rem; padding:.3rem .6rem; background:#eee; }
+  .acct label { display:inline-flex; align-items:center; gap:.3rem; margin:.3rem .8rem 0 0; }
+  .toggle { display:flex; align-items:center; gap:.6rem; font-size:.9rem; color:var(--muted); }
+  .sub-line { padding:.5rem 0; border-top:1px solid #eee; }
+  .sub-line:first-child { border-top:none; }
+  .sub-ok { color:var(--accent); font-weight:600; }
+  .sub-warn { color:#8a6d00; font-weight:600; }
+  .sub-bad { color:var(--danger); font-weight:600; }
+  .sub-msg { font-size:.8rem; color:var(--muted); margin:.2rem 0 0; }
+  .linkbtn { display:block; text-align:center; text-decoration:none; }
 </style>
 <body>
 <main>
@@ -58,6 +73,41 @@
     <input type="file" id="file" accept="image/*" capture="environment" hidden>
     <p class="tag">Get close — fill the frame with the sign, and keep other text
     (house numbers, bin labels) out of the shot.</p>
+    <div class="card">
+      <div id="acct-list"><p class="tag">No AADL account connected — codes will
+      open aadl.org for you to submit yourself.</p></div>
+      <button class="ghost" id="btn-connect" style="width:100%">+ Connect AADL account</button>
+      <label class="toggle" id="auto-row" hidden>
+        <input type="checkbox" id="auto-toggle">
+        Fully automatic: submit instant reads without confirming
+      </label>
+    </div>
+  </div>
+
+  <div class="view" id="v-connect">
+    <div class="card cred">
+      <p>Log in with your aadl.org account. The password is used once to sign
+      in and is not stored anywhere — this phone keeps only the signed-in
+      session.</p>
+      <p><input type="text" id="c-user" placeholder="Username or barcode"
+        autocomplete="username" autocapitalize="none"></p>
+      <p><input type="password" id="c-pass" placeholder="Password"
+        autocomplete="current-password"></p>
+      <p class="err" id="c-err" hidden></p>
+    </div>
+    <button class="primary big" id="c-connect">Connect</button>
+    <button class="ghost" id="c-cancel">Cancel</button>
+  </div>
+
+  <div class="view" id="v-submitted">
+    <div class="card">
+      <p class="tag">Submitted to AADL</p>
+      <div class="code" id="s-code"></div>
+      <div id="s-results"></div>
+    </div>
+    <button class="primary" id="s-escalate" hidden>Not recognized — ask Claude for a closer look</button>
+    <button class="danger" id="s-edit" hidden>&#9998; Fix the code by hand</button>
+    <button class="primary big" id="s-new">&#128247; New photo</button>
   </div>
 
   <div class="view" id="v-busy">
@@ -94,8 +144,10 @@
       <p class="tag">Your code</p>
       <div class="code" id="d-code"></div>
     </div>
-    <button class="primary big" id="d-copy">Copy code</button>
-    <p style="text-align:center"><a href="https://play.aadl.org" target="_blank" rel="noopener">Enter it at play.aadl.org &rarr;</a></p>
+    <a class="linkbtn primary big" id="d-link" href="#" target="_blank" rel="noopener"
+       style="padding:1.1rem;border-radius:12px;background:var(--accent);color:#fff;font-weight:600">
+       Submit at aadl.org &rarr;</a>
+    <button class="ghost" id="d-copy">Copy code</button>
     <button class="ghost" id="d-new">&#128247; New photo</button>
   </div>
 
@@ -132,7 +184,98 @@ function home() {
   // decoded bitmaps on a memory-constrained phone.
   $("r-crop").removeAttribute("src");
   $("m-crop").removeAttribute("src");
+  renderAccounts();
   show("v-home");
+}
+
+// ---- AADL accounts (cookie blobs live only on this phone; see aadl.ts) ----
+
+const getAccounts = () => JSON.parse(localStorage.getItem("aadlAccounts") || "[]");
+const saveAccounts = (a) => localStorage.setItem("aadlAccounts", JSON.stringify(a));
+// Accounts that are connected, unexpired, and have at least one player picked.
+const activeAccounts = () => getAccounts().filter((a) => !a.expired && a.selectedPids.length);
+const autoMode = () => localStorage.getItem("autoMode") === "1" && activeAccounts().length > 0;
+const handoffUrl = (code) =>
+  "https://aadl.org/summergame/player/0/gamecode?text=" + encodeURIComponent(code);
+
+function renderAccounts() {
+  const accounts = getAccounts();
+  const list = $("acct-list");
+  if (!accounts.length) {
+    list.innerHTML = '<p class="tag">No AADL account connected — codes will open aadl.org for you to submit yourself.</p>';
+  } else {
+    list.replaceChildren(...accounts.map((acct, i) => {
+      const div = document.createElement("div");
+      div.className = "acct";
+      const head = document.createElement("div");
+      head.className = "acct-head";
+      const name = document.createElement("b");
+      name.textContent = acct.label + (acct.expired ? " — session expired" : "");
+      if (acct.expired) name.style.color = "var(--danger)";
+      const btns = document.createElement("span");
+      if (acct.expired) {
+        const re = document.createElement("button");
+        re.textContent = "Reconnect";
+        re.onclick = () => { $("c-user").value = acct.label; show("v-connect"); };
+        btns.append(re, " ");
+      }
+      const rm = document.createElement("button");
+      rm.textContent = "✕";
+      rm.onclick = () => { accounts.splice(i, 1); saveAccounts(accounts); renderAccounts(); };
+      btns.append(rm);
+      head.append(name, btns);
+      div.append(head);
+      for (const p of acct.players) {
+        const label = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = acct.selectedPids.includes(p.pid);
+        cb.onchange = () => {
+          acct.selectedPids = cb.checked
+            ? [...acct.selectedPids, p.pid]
+            : acct.selectedPids.filter((x) => x !== p.pid);
+          saveAccounts(accounts);
+        };
+        label.append(cb, p.name);
+        div.append(label);
+      }
+      return div;
+    }));
+  }
+  $("auto-row").hidden = accounts.length === 0;
+  $("auto-toggle").checked = localStorage.getItem("autoMode") === "1";
+}
+
+async function connectAccount() {
+  const username = $("c-user").value.trim();
+  const password = $("c-pass").value;
+  if (!username || !password) return;
+  $("c-err").hidden = true;
+  $("c-connect").disabled = true;
+  $("c-connect").textContent = "Connecting…";
+  try {
+    const r = await api("/api/aadl/connect", { username, password });
+    const accounts = getAccounts();
+    const existing = accounts.find((a) => a.label === username);
+    const acct = existing ?? { label: username, selectedPids: r.players.map((p) => p.pid) };
+    acct.cookies = r.cookies;
+    acct.players = r.players;
+    acct.expired = false;
+    acct.selectedPids = acct.selectedPids.filter((pid) => r.players.some((p) => p.pid === pid));
+    if (!acct.selectedPids.length) acct.selectedPids = r.players.map((p) => p.pid);
+    if (!existing) accounts.push(acct);
+    saveAccounts(accounts);
+    $("c-user").value = "";
+    home();
+  } catch (err) {
+    if (err && err.pinRejected) return;
+    $("c-err").textContent = String((err && err.message) || err);
+    $("c-err").hidden = false;
+  } finally {
+    $("c-pass").value = ""; // never keep the password around
+    $("c-connect").disabled = false;
+    $("c-connect").textContent = "Connect";
+  }
 }
 
 async function api(path, body) {
@@ -321,6 +464,11 @@ async function onPhoto(file) {
     state.cropDataUrl = res.cropDataUrl;
 
     if (res.tier1.gatePassed) {
+      if (autoMode()) {
+        state.presented = { tier: 1, code: res.tier1.code };
+        state.verdicts.push({ tier: 1, code: res.tier1.code, minConf: res.tier1.minConf, action: "auto_submitted" });
+        return finish(res.tier1.code, "tier1_auto");
+      }
       presentResult(1, res.tier1.code, res.tier1.minConf);
     } else {
       state.verdicts.push({ tier: 1, code: res.tier1.code, minConf: res.tier1.minConf, action: "auto_skipped_gate" });
@@ -353,8 +501,115 @@ async function finish(code, source) {
       sessionId: state.sessionId,
       record: { verdicts: state.verdicts, finalCode: code, source, clientMs: Date.now() - state.t0, timings: state.timings },
     });
-    $("d-code").textContent = code;
-    show("v-done");
+    if (activeAccounts().length) {
+      await submitToAadl(code);
+    } else {
+      $("d-code").textContent = code;
+      $("d-link").href = handoffUrl(code);
+      show("v-done");
+    }
+  } catch (err) { fail(err); }
+}
+
+// ---- AADL submission ----
+
+const OUTCOME_TEXT = {
+  success: ["sub-ok", "&#10003; accepted"],
+  already_redeemed: ["sub-ok", "&#10003; already redeemed (code was right)"],
+  not_recognized: ["sub-warn", "not recognized"],
+  close_match: ["sub-warn", "close to a real code &mdash; check the spelling"],
+  expired: ["sub-bad", "code expired"],
+  not_yet_valid: ["sub-bad", "not active yet"],
+  max_redemptions: ["sub-bad", "redemption limit reached"],
+  rate_limited: ["sub-bad", "rate limited &mdash; wait a bit"],
+  auth_expired: ["sub-bad", "session expired &mdash; reconnect on the start screen"],
+  error: ["sub-bad", "failed"],
+  unknown: ["sub-warn", "unclear response &mdash; check aadl.org"],
+};
+
+async function submitToAadl(code) {
+  const accounts = activeAccounts();
+  show("v-busy", "Submitting to AADL…");
+  const t = Date.now();
+  const res = await api("/api/submit", {
+    sessionId: state.sessionId,
+    code,
+    accounts: accounts.map((a) => ({ cookies: a.cookies, pids: a.selectedPids, label: a.label })),
+  });
+  state.timings.submitMs = (state.timings.submitMs || 0) + (Date.now() - t);
+  state.lastSubmitted = code;
+
+  const all = getAccounts();
+  for (const r of res.results) {
+    if (r.outcome === "auth_expired") {
+      const acct = all.find((a) => a.label === r.label);
+      if (acct) acct.expired = true;
+    }
+  }
+  saveAccounts(all);
+
+  // The oracle: AADL not recognizing an OCR code is the tier-2 trigger.
+  const rejected = res.results.some((r) => r.outcome === "not_recognized" || r.outcome === "close_match");
+  const ocrCode = state.presented && !state.verdicts.some((v) => v.action === "manual_entry");
+  const canEscalate = rejected && ocrCode && !state.tier2 && !state.autoEscalated;
+  if (rejected && autoMode() && canEscalate) {
+    state.autoEscalated = true;
+    state.verdicts.push({ tier: state.presented.tier, code, action: "aadl_rejected" });
+    show("v-busy", "AADL didn't recognize it — asking Claude…");
+    const t2 = Date.now();
+    const r = await api("/api/escalate", { sessionId: state.sessionId });
+    state.timings.escalateMs = Date.now() - t2;
+    state.tier2 = r.tier2;
+    const newCode = norm(r.tier2.code);
+    if (newCode && newCode !== code) {
+      state.verdicts.push({ tier: 2, code: newCode, action: "auto_submitted" });
+      return finish(newCode, "tier2_auto");
+    }
+    return showManual();
+  }
+
+  $("s-code").textContent = code;
+  $("s-results").replaceChildren(...res.results.map((r) => {
+    const [cls, label] = OUTCOME_TEXT[r.outcome] || OUTCOME_TEXT.unknown;
+    const div = document.createElement("div");
+    div.className = "sub-line";
+    const head = document.createElement("div");
+    const badge = document.createElement("span");
+    badge.className = cls;
+    badge.innerHTML = label +
+      (r.outcome === "success" && r.points != null ? " &middot; " + r.points + " pts each" : "");
+    if (res.results.length > 1) head.append(r.label + ": ");
+    head.append(badge);
+    div.append(head);
+    for (const m of r.messages || []) {
+      const p = document.createElement("p");
+      p.className = "sub-msg";
+      p.textContent = m.text;
+      div.append(p);
+    }
+    if (r.error) {
+      const p = document.createElement("p");
+      p.className = "sub-msg";
+      p.textContent = r.error;
+      div.append(p);
+    }
+    return div;
+  }));
+  $("s-escalate").hidden = !canEscalate;
+  $("s-edit").hidden = !rejected;
+  show("v-submitted");
+}
+
+async function escalateAfterReject() {
+  try {
+    state.autoEscalated = true;
+    state.verdicts.push({ tier: state.presented.tier, code: state.lastSubmitted, action: "aadl_rejected" });
+    show("v-busy", "Asking Claude for a closer look…");
+    const t = Date.now();
+    const r = await api("/api/escalate", { sessionId: state.sessionId });
+    state.timings.escalateMs = Date.now() - t;
+    state.tier2 = r.tier2;
+    presentResult(2, r.tier2.code);
   } catch (err) { fail(err); }
 }
 
@@ -386,6 +641,13 @@ $("d-copy").onclick = async () => {
   catch { /* clipboard denied; user can long-press */ }
 };
 $("d-new").onclick = home;
+$("btn-connect").onclick = () => { $("c-err").hidden = true; show("v-connect"); };
+$("c-connect").onclick = connectAccount;
+$("c-cancel").onclick = home;
+$("auto-toggle").onchange = (e) => localStorage.setItem("autoMode", e.target.checked ? "1" : "0");
+$("s-new").onclick = home;
+$("s-escalate").onclick = escalateAfterReject;
+$("s-edit").onclick = showManual;
 $("r-restart").onclick = home;
 $("m-restart").onclick = home;
 $("e-retry").onclick = home;

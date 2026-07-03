@@ -11,12 +11,21 @@ take a picture → the app extracts the code using the pipeline proven here
 play.aadl.org for the user's account(s) — multiple accounts per user (e.g.
 family) should each get the code.
 
-Open questions for the app phase, not yet investigated: AADL has no public
-API and submission requires a logged-in account, so auto-submit needs a
-session/auth story (which also bends the original "stateless" intent); how
-multi-account submission works; note that a failed submission doubles as the
-validation oracle the bake-off never had — it's the natural tier-escalation
-trigger.
+Auth story (resolved in v0.2.1, see src/app/aadl.ts): the game is a Drupal 10
+form on aadl.org (play.aadl.org just redirects; module source is public at
+github.com/aadl/summergame). No credential is ever stored server-side: the
+client sends username/password once to /api/aadl/connect, the Lambda performs
+the Drupal login (persistent_login=1) and hands the cookie jar back to the
+phone (localStorage); /api/submit replays those cookies. One account can hold
+many players — the redeem form's pids[] checkboxes get all of them in one
+POST. Zero-credential fallback: aadl.org/summergame/player/0/gamecode?text=CODE
+prefills the form for the user's own browser session (AADL's QR flow).
+The submission response IS the validation oracle: "Code is not recognized"
+(traceless server-side — no ledger row, doesn't count against the rate limit)
+triggers tier-2 escalation; "already redeemed" confirms a correct read. Only
+real risk: a misread colliding with a *different* valid code awards wrong
+points — why approve-before-submit stays the default (full-auto is a client
+toggle, default off).
 
 ## The one governing constraint
 
@@ -40,12 +49,20 @@ Scoring normalizes case/whitespace (submission is case/space-insensitive).
 - `npm run app` — field-test app server at :8080 (same code Lambda runs);
   `npx tsx infra/apitest.ts [--full] [base-url]` smoke-tests it (`--full` = paid
   path). `bash infra/deploy.sh` — idempotent deploy (ECR image → Lambda + URL).
+- `npx tsx infra/aadltest.ts [CODE]` — live integration test of the aadl.org
+  client (login/connect/gibberish-submit; needs AADL_USERNAME/AADL_PASSWORD
+  test creds in .env). Pass a CODE to exercise the success path — it REALLY
+  redeems it on the test account (repeat runs verify via already_redeemed).
 
 ## Field-test app (src/app + infra)
 
-v1 app: photo → tier-1 GCV (no spatial band; gate minConf≥0.5) → approve/reject
-→ tier-2 Claude on the GCV-line crop → manual prefilled. No play.aadl.org
-submission yet. Client uploads full-res JPEG straight to S3 via presigned PUT
+v0.2 app: photo → tier-1 GCV (no spatial band; gate minConf≥0.5) → approve/
+reject → tier-2 Claude on the GCV-line crop → manual prefilled → submit to
+aadl.org for every connected account/player (or the ?text= handoff link when
+none is connected). Rejected submits offer/auto-run tier-2 escalation
+(submit.json logs each attempt per session, cookie-free; verdict.json and
+submit.json stay separate so extraction accuracy and submission health are
+independently attributable). Client uploads full-res JPEG straight to S3 via presigned PUT
 (dodges the 6MB Function URL cap, keeps tier-2 crops high-res); every session
 logs photo/crop/results/verdicts under s3://aadl-sg-sessions-…/sessions/ for
 future labeling. Access gate = APP_PIN (.env) checked server-side.

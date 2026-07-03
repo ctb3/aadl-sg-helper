@@ -44,6 +44,8 @@ interface Row {
   verdicts: any[];
   timings: Record<string, number>;
   clientMs: number | null;
+  /** submit.json attempts: [{at, code, results:[{label, outcome, points, ...}]}] */
+  submits: any[];
 }
 
 function pct(a: number, b: number): string {
@@ -75,10 +77,11 @@ async function main(): Promise<void> {
 
   const rows: Row[] = [];
   for (const id of [...ids].sort()) {
-    const [extract, tier2, verdict] = await Promise.all([
+    const [extract, tier2, verdict, submit] = await Promise.all([
       getJson(`${prefix}${id}/extract.json`),
       getJson(`${prefix}${id}/tier2.json`),
       getJson(`${prefix}${id}/verdict.json`),
+      getJson(`${prefix}${id}/submit.json`),
     ]);
     if (!extract) continue; // nothing to analyze
     const t2 = tier2?.tier2 ?? extract.tier2 ?? null;
@@ -99,6 +102,7 @@ async function main(): Promise<void> {
       verdicts: verdict?.verdicts ?? [],
       timings: verdict?.timings ?? {},
       clientMs: typeof verdict?.clientMs === "number" ? verdict.clientMs : null,
+      submits: submit?.attempts ?? [],
     });
   }
 
@@ -112,10 +116,12 @@ async function main(): Promise<void> {
     const t = r.timings;
     const ok = (code: string | null): string =>
       code === null ? "-" : r.truth === null ? code : `${code}${code === r.truth ? " ✓" : " ✗"}`;
+    const lastSubmit = r.submits.at(-1);
     const notes = [
       r.usedLine ? "" : "no-line",
       r.truth === null ? "ABANDONED" : "",
       r.t2How === "auto" ? "auto-t2" : "",
+      lastSubmit ? `sub:${[...new Set(lastSubmit.results.map((x: any) => x.outcome))].join("/")}` : "",
     ].filter(Boolean).join(" ");
     console.log(
       r.id.slice(0, 13).padEnd(15) +
@@ -147,6 +153,28 @@ async function main(): Promise<void> {
   console.log(`tier1 correct when gated:  ${pct(gateRight.length, gateDone.length)}  <- instant-answer precision`);
   console.log(`tier2 correct when run:    ${pct(t2Right.length, t2Done.length)}`);
   console.log(`final source:              ${[...bySource].map(([k, v]) => `${k}=${v}`).join("  ")}`);
+
+  // AADL submission: the site's response is the validation oracle the bake-off
+  // never had — rejected first attempts are exactly the tier-escalation signal.
+  const withSubmits = rows.filter((r) => r.submits.length);
+  if (withSubmits.length) {
+    const outcomes = new Map<string, number>();
+    for (const r of withSubmits) {
+      for (const a of r.submits) {
+        for (const x of a.results) outcomes.set(x.outcome, (outcomes.get(x.outcome) ?? 0) + 1);
+      }
+    }
+    const firstRejected = withSubmits.filter((r) =>
+      r.submits[0].results.some((x: any) => x.outcome === "not_recognized" || x.outcome === "close_match"));
+    const recovered = firstRejected.filter((r) =>
+      r.submits.at(-1).results.some((x: any) => x.outcome === "success" || x.outcome === "already_redeemed"));
+    console.log(`\n== AADL submission (${withSubmits.length} session(s) submitted)`);
+    console.log(`outcomes (all attempts):   ${[...outcomes].map(([k, v]) => `${k}=${v}`).join("  ")}`);
+    console.log(`rejected on first try:     ${pct(firstRejected.length, withSubmits.length)}  <- oracle-caught misreads`);
+    if (firstRejected.length) console.log(`recovered after rejection: ${pct(recovered.length, firstRejected.length)}`);
+    const subLat = withSubmits.flatMap((r) => r.submits.flatMap((a: any) => a.results.map((x: any) => x.latencyMs))).filter((x: any) => typeof x === "number");
+    console.log(`submit latency:            ${stats(subLat)}`);
+  }
 
   const T = (k: string): number[] => done.map((r) => r.timings[k]).filter((x) => typeof x === "number");
   console.log(`\n== speed (completed sessions)`);

@@ -7,6 +7,7 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { config } from "../config";
 import { dims } from "../image";
+import { AuthExpiredError, connect, loadJar, submitCode } from "./aadl";
 import { runTier1, runTier2 } from "./pipeline";
 
 /**
@@ -143,6 +144,73 @@ async function handleVerdict(body: Record<string, unknown>): Promise<unknown> {
   return { ok: true };
 }
 
+// AADL credentials/cookies pass through these two handlers and are never
+// persisted or logged — the client holds the cookie blob (see aadl.ts).
+
+async function handleAadlConnect(body: Record<string, unknown>): Promise<unknown> {
+  const { username, password } = body;
+  if (typeof username !== "string" || !username || typeof password !== "string" || !password) {
+    throw new Error("username and password required");
+  }
+  return connect(username, password);
+}
+
+interface SubmitAccount {
+  cookies: string;
+  pids: number[];
+  label: string;
+}
+
+function parseAccounts(body: Record<string, unknown>): SubmitAccount[] {
+  if (!Array.isArray(body.accounts) || body.accounts.length === 0 || body.accounts.length > 8) {
+    throw new Error("accounts must be a list of 1-8 connected accounts");
+  }
+  return body.accounts.map((a: any, i: number) => {
+    if (typeof a?.cookies !== "string") throw new Error("accounts must be a list of 1-8 connected accounts");
+    return {
+      cookies: a.cookies,
+      pids: Array.isArray(a.pids) ? a.pids.map(Number).filter(Number.isFinite) : [],
+      label: typeof a.label === "string" && a.label ? a.label.slice(0, 40) : `account ${i + 1}`,
+    };
+  });
+}
+
+async function handleSubmit(body: Record<string, unknown>): Promise<unknown> {
+  const sessionId = requireSessionId(body);
+  const code = typeof body.code === "string" ? body.code.toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+  if (!code || code.length > 16) throw new Error("bad code");
+  const accounts = parseAccounts(body);
+
+  // Sequential on purpose: be gentle with aadl.org.
+  const results = [];
+  for (const acct of accounts) {
+    try {
+      const r = await submitCode(loadJar(acct.cookies), code, acct.pids);
+      results.push({ label: acct.label, ...r });
+    } catch (err: any) {
+      results.push({
+        label: acct.label,
+        outcome: err instanceof AuthExpiredError ? ("auth_expired" as const) : ("error" as const),
+        error: String(err?.message ?? err),
+      });
+    }
+  }
+
+  // Cookie-free trail: one submit.json per session, accumulating attempts
+  // (approve-submit then escalate-resubmit is the expected two-entry shape).
+  const key = sessionKey(sessionId, "submit.json");
+  let attempts: unknown[] = [];
+  try {
+    attempts = JSON.parse((await s3GetBuffer(key)).toString("utf8")).attempts ?? [];
+  } catch {
+    // first attempt for this session
+  }
+  attempts.push({ at: new Date().toISOString(), code, results });
+  await s3PutJson(key, { attempts });
+
+  return { code, results };
+}
+
 // ---------- server ----------
 
 const API: Record<string, (body: Record<string, unknown>) => Promise<unknown>> = {
@@ -150,6 +218,8 @@ const API: Record<string, (body: Record<string, unknown>) => Promise<unknown>> =
   "/api/extract": handleExtract,
   "/api/escalate": handleEscalate,
   "/api/verdict": handleVerdict,
+  "/api/aadl/connect": handleAadlConnect,
+  "/api/submit": handleSubmit,
 };
 
 const server = http.createServer(async (req, res) => {
@@ -194,7 +264,11 @@ const server = http.createServer(async (req, res) => {
     const msg = String(err?.message ?? err);
     if (err?.name === "NoSuchKey") {
       send(res, 404, { error: "session object not found (upload the photo first?)" });
-    } else if (msg === "bad sessionId" || msg === "body too large" || err instanceof SyntaxError) {
+    } else if (
+      msg === "bad sessionId" || msg === "body too large" || msg === "bad code" ||
+      msg === "username and password required" || msg.startsWith("accounts must be") ||
+      err instanceof SyntaxError
+    ) {
       send(res, 400, { error: msg });
     } else {
       console.error(`${req.method} ${url.pathname} failed:`, err);

@@ -1,5 +1,5 @@
 import { config } from "../config";
-import { cropWithPadding, downscaleToLongestEdge } from "../image";
+import { cropWithPadding, downscaleToLongestEdge, fitsAsIs } from "../image";
 import { alnum, combinedLine, gcvLines } from "../postproc";
 import { claudeReader } from "../readers/claude";
 import type { GcvWord } from "../readers/gcv";
@@ -34,7 +34,11 @@ export interface Tier1 {
 }
 
 export async function runTier1(orig: Buffer): Promise<{ tier1: Tier1; cropJpeg: Buffer }> {
-  const gcvInput = await downscaleToLongestEdge(orig, config.gcvMaxEdge);
+  // The client already uploads a 2400px EXIF-free JPEG; skip the redundant
+  // decode+re-encode then. Oversized/EXIF-rotated uploads still get normalized.
+  const gcvInput = (await fitsAsIs(orig, config.gcvMaxEdge))
+    ? orig
+    : await downscaleToLongestEdge(orig, config.gcvMaxEdge);
   const raw = await gcvReader.read(gcvInput, "gcv_crop");
   const words = (raw.rawResponse as { words?: GcvWord[] })?.words ?? [];
   const line = combinedLine(gcvLines(words));

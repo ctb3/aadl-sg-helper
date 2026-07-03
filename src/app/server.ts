@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { config } from "../config";
+import { dims } from "../image";
 import { runTier1, runTier2 } from "./pipeline";
 
 /**
@@ -104,6 +105,7 @@ async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
 
   await s3PutJson(sessionKey(sessionId, "extract.json"), {
     at: new Date().toISOString(),
+    photo: { ...(await dims(photo)), bytes: photo.length },
     tier1, // includes raw GCV words/geometry for later analysis
     tier2,
   });

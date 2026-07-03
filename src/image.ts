@@ -11,6 +11,15 @@ export async function dims(buf: Buffer): Promise<Dims> {
   return { width: m.width ?? 0, height: m.height ?? 0 };
 }
 
+/** True when the image fits maxEdge AND carries no EXIF rotation — i.e. a
+ * downscale-normalize pass would only re-encode the same pixels. */
+export async function fitsAsIs(buf: Buffer, maxEdge: number): Promise<boolean> {
+  const m = await sharp(buf).metadata();
+  const w = m.width ?? 0;
+  const h = m.height ?? 0;
+  return w > 0 && h > 0 && Math.max(w, h) <= maxEdge && (m.orientation ?? 1) === 1;
+}
+
 /** Downscale so the longest edge is <= maxEdge, re-encode as JPEG. */
 export async function downscaleToLongestEdge(buf: Buffer, maxEdge: number): Promise<Buffer> {
   return sharp(buf)

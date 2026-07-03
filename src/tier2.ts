@@ -15,11 +15,16 @@ import type { ReaderResult, RunRecord } from "./types";
  * Targets the failure mode of raw framing: at MAX_EDGE downscale a
  * small-in-frame sign leaves the handwriting too few pixels to read.
  *
- *   npx tsx src/tier2.ts
+ *   npx tsx src/tier2.ts [--from-prepped]
  *
  * Requires fresh GCV caches (npm run bake -- --reader gcv --arm none).
  * Results cached like the main harness; crops written to data/crops for
  * eyeballing.
+ *
+ * --from-prepped crops from the GCV_MAX_EDGE prepped image instead of the
+ * original photo — measuring what the field app's single small upload would
+ * give tier 2. Distinct cache/out names; when the original-crop result is
+ * cached, each line prints it alongside for comparison.
  */
 
 // Generous padding around the tight line box: keep neighbouring context (and
@@ -46,6 +51,20 @@ function readLabels(): GroundTruth[] {
   return out;
 }
 
+const fromPrepped = process.argv.includes("--from-prepped");
+const srcTag = fromPrepped ? `e${config.gcvMaxEdge}src` : "";
+
+/** The GCV_MAX_EDGE downscale, cached exactly where run.ts's getPrepped puts it. */
+async function getPrepped2400(filename: string): Promise<Buffer> {
+  fs.mkdirSync(config.preppedDir, { recursive: true });
+  const p = path.join(config.preppedDir, `${sanitize(filename)}.e${config.gcvMaxEdge}.jpg`);
+  if (fs.existsSync(p)) return fs.readFileSync(p);
+  const orig = fs.readFileSync(path.join(config.imagesDir, filename));
+  const buf = await downscaleToLongestEdge(orig, config.gcvMaxEdge);
+  fs.writeFileSync(p, buf);
+  return buf;
+}
+
 async function main(): Promise<void> {
   const labels = readLabels();
   const claudeTag = modelTag("claude", "none");
@@ -53,7 +72,7 @@ async function main(): Promise<void> {
   fs.mkdirSync(config.cropsDir, { recursive: true });
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const outDir = path.join(config.outDir, `${stamp}-gcvcrop`);
+  const outDir = path.join(config.outDir, `${stamp}-gcvcrop${fromPrepped ? `-${srcTag}` : ""}`);
   fs.mkdirSync(outDir, { recursive: true });
   const records: RunRecord[] = [];
 
@@ -71,28 +90,43 @@ async function main(): Promise<void> {
 
     const cachePath = path.join(
       config.cacheDir,
-      `${sanitize(gt.filename)}__claude__gcvcrop${claudeTag}${gcvTag}.json`,
+      `${sanitize(gt.filename)}__claude__gcvcrop${srcTag}${claudeTag}${gcvTag}.json`,
     );
     let result: any;
     if (fs.existsSync(cachePath)) {
       result = JSON.parse(fs.readFileSync(cachePath, "utf8"));
     } else {
-      const orig = fs.readFileSync(path.join(config.imagesDir, gt.filename));
+      const src = fromPrepped
+        ? await getPrepped2400(gt.filename)
+        : fs.readFileSync(path.join(config.imagesDir, gt.filename));
       let image: Buffer;
       if (line) {
-        const crop = await cropWithPadding(orig, line.bbox, PAD_PCT);
+        const crop = await cropWithPadding(src, line.bbox, PAD_PCT);
         image = await downscaleToLongestEdge(crop, config.maxEdge);
         fs.writeFileSync(
-          path.join(config.cropsDir, `${sanitize(gt.filename)}__gcvline.jpg`),
+          path.join(config.cropsDir, `${sanitize(gt.filename)}__gcvline${srcTag}.jpg`),
           image,
         );
       } else {
         // GCV found no candidate line — tier 2 falls back to the full photo.
-        image = await downscaleToLongestEdge(orig, config.maxEdge);
+        image = await downscaleToLongestEdge(src, config.maxEdge);
       }
       result = await claudeReader.read(image, "none");
       result.usedGcvLine = !!line;
       if (!result.error) fs.writeFileSync(cachePath, JSON.stringify(result, null, 2));
+    }
+
+    // In --from-prepped mode, surface the cached original-crop read for a
+    // per-image comparison (empty if the original run isn't cached).
+    let origPred = "";
+    if (fromPrepped) {
+      const origCache = path.join(
+        config.cacheDir,
+        `${sanitize(gt.filename)}__claude__gcvcrop${claudeTag}${gcvTag}.json`,
+      );
+      if (fs.existsSync(origCache)) {
+        origPred = normalize(JSON.parse(fs.readFileSync(origCache, "utf8")).code ?? "");
+      }
     }
 
     if (!line) noLine++;
@@ -128,7 +162,8 @@ async function main(): Promise<void> {
 
     console.log(
       `${exact ? "✓" : "✗"} ${gt.filename.padEnd(32)} truth=${normalize(gt.code).padEnd(13)} ` +
-        `pred=${pred.padEnd(13)} ${line ? "" : "(no line; full photo)"}`,
+        `pred=${pred.padEnd(13)}${origPred ? ` orig=${origPred.padEnd(13)}${pred === origPred ? "" : " DIFF"}` : ""} ` +
+        `${line ? "" : "(no line; full photo)"}`,
     );
   }
 
@@ -144,7 +179,8 @@ async function main(): Promise<void> {
   });
 
   console.log(
-    `\nclaude on gcv-line crop: ${ok}/${n} (${((ok / (n || 1)) * 100).toFixed(1)}%) exact` +
+    `\nclaude on gcv-line crop${fromPrepped ? ` (from e${config.gcvMaxEdge} prepped)` : ""}: ` +
+      `${ok}/${n} (${((ok / (n || 1)) * 100).toFixed(1)}%) exact` +
       (noLine ? ` · ${noLine} full-photo fallback(s)` : ""),
   );
   console.log(`  ${path.join(outDir, "report.md")}`);

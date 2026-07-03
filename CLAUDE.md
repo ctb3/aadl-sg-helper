@@ -57,9 +57,11 @@ client once silently dropped a batch's instrumentation.
 Deploy account 619467956318 (us-east-2, profile service-aadl-sg-helper; its
 inline `aadl-sg-app-deploy` IAM policy = infra/deploy-user-policy.json).
 Gotchas burned in already: Lambda rejects BuildKit attestation manifests
-(deploy.sh builds with --provenance=false), and the Function URL needed a
+(deploy.sh builds with --provenance=false); the Function URL needed a
 public lambda:InvokeFunction grant besides InvokeFunctionUrl (PIN still holds
-either way).
+either way); Android Chrome throttles main-thread canvas work after returning
+from the camera app (constant ~13.4s toBlob stall) — client encodes in a
+Web Worker via OffscreenCanvas (main-thread fallback kept).
 
 ## Caching rules (read before re-running anything)
 

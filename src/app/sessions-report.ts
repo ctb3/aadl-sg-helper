@@ -168,8 +168,9 @@ async function main(): Promise<void> {
       const t = r.timings as any;
       console.log(
         `${r.id.slice(0, 13)}  prep=${t.prepMs}ms fileRead=${t.fileReadMs ?? "?"}ms ` +
-        `decode=${t.decodeMs ?? "?"}ms encode=${t.encodeMs ?? "?"}ms ` +
-        `fileAge=${t.fileAgeMs ?? "?"}ms type=${t.fileType ?? "?"} bytes=${t.fileBytes ?? "?"}`,
+        `decode=${t.decodeMs ?? "?"}ms draw=${t.drawMs ?? "?"}ms blob=${t.blobMs ?? "?"}ms ` +
+        `worker=${t.worker ?? "?"} fileAge=${t.fileAgeMs ?? "?"}ms ` +
+        `type=${t.fileType ?? "?"} bytes=${t.fileBytes ?? "?"}`,
       );
     }
   }

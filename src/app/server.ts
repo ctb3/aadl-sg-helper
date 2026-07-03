@@ -178,7 +178,8 @@ function parseAccounts(body: Record<string, unknown>): SubmitAccount[] {
 async function handleSubmit(body: Record<string, unknown>): Promise<unknown> {
   const sessionId = requireSessionId(body);
   const code = typeof body.code === "string" ? body.code.toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
-  if (!code || code.length > 16) throw new Error("bad code");
+  // Game codes are at most 12 chars — longer is a guaranteed misread.
+  if (!code || code.length > 12) throw new Error("bad code");
   const accounts = parseAccounts(body);
 
   // Sequential on purpose: be gentle with aadl.org.

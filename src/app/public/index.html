@@ -56,9 +56,6 @@
     background:#eaf6ef; border:1px solid #bfe3cd; border-radius:10px; padding:.8rem; margin:.4rem 0 0; }
   .s-head-ok { font-size:1.35rem; font-weight:700; color:var(--accent); text-align:center; margin:0; }
   .m-note { color:#8a6d00; font-weight:600; text-align:center; margin:0; }
-  .photo-cap { font-size:.75rem; color:var(--muted); text-align:center; margin:0; }
-  details.warn { font-size:.9rem; color:var(--muted); margin:.5rem 0; }
-  details.warn summary { cursor:pointer; color:#8a6d00; font-weight:600; }
   footer { text-align:center; font-size:.8rem; color:var(--muted); padding:0 1rem 1.2rem; }
   footer a { color:var(--muted); }
 </style>
@@ -90,28 +87,30 @@
   </div>
 
   <div class="view" id="v-connect">
-    <div class="card cred">
+    <div class="card" id="c-warn">
+      <p><b>&#9888;&#65039; Before you type your library password&hellip;</b></p>
+      <p>Your password passes through this app's server once to log in to
+      aadl.org. It is not stored or logged anywhere — but you're taking the
+      operator's word for that, and that's an inherently insecure thing to
+      ask of you.</p>
+      <p>If you'd rather not, that's completely fine: everything still works
+      without an account — the app reads the code from your photo and hands
+      you a prefilled aadl.org link so you can submit it yourself, signed in
+      on your own browser.</p>
+    </div>
+    <button class="primary big" id="c-accept">I understand — continue</button>
+    <div class="card cred" id="c-form" hidden>
       <p>Log in with your aadl.org account. The password is used once to sign
       in and is not stored anywhere — this phone keeps only the signed-in
       session.</p>
-      <details class="warn">
-        <summary>&#9888;&#65039; Before you type your library password&hellip;</summary>
-        <p>Your password passes through this app's server once to log in to
-        aadl.org. It is not stored or logged anywhere — but you're taking the
-        operator's word for that, and that's an inherently insecure thing to
-        ask of you.</p>
-        <p>If you'd rather not, that's completely fine: cancel this screen and
-        everything still works without an account — the app reads the code
-        from your photo and hands you a prefilled aadl.org link so you can
-        submit it yourself, signed in on your own browser.</p>
-      </details>
       <p><input type="text" id="c-user" placeholder="Username or barcode"
         autocomplete="username" autocapitalize="none"></p>
       <p><input type="password" id="c-pass" placeholder="Password"
         autocomplete="current-password"></p>
       <p class="err" id="c-err" hidden></p>
+      <button class="ghost" id="c-reread" style="width:100%">&#9888;&#65039; Read the warning again</button>
     </div>
-    <button class="primary big" id="c-connect">Connect</button>
+    <button class="primary big" id="c-connect" hidden>Connect</button>
     <button class="ghost" id="c-cancel">Cancel</button>
   </div>
 
@@ -135,11 +134,11 @@
     <img class="crop" id="r-crop" alt="detected code region">
     <div class="card">
       <div class="code" id="r-code"></div>
-      <p class="tag" id="r-tag"></p>
+      <p class="m-note" id="r-tag" hidden></p>
     </div>
     <div class="row">
-      <button class="danger" id="r-reject">&#8635; Try again</button>
-      <button class="primary" id="r-approve">&#10003; Use this code</button>
+      <button class="danger" id="r-reject">Try harder</button>
+      <button class="primary" id="r-approve">&#10003; Submit at aadl.org</button>
     </div>
     <button class="ghost" id="r-restart">Start over</button>
   </div>
@@ -148,13 +147,10 @@
     <p class="m-note" id="m-note" hidden></p>
     <img class="crop" id="m-crop" alt="detected code region">
     <div class="card">
-      <p>Type the code as written:</p>
-      <input type="text" id="m-input" autocomplete="off" autocapitalize="characters" maxlength="16">
+      <p id="m-head">Type the code as written:</p>
+      <input type="text" id="m-input" autocomplete="off" autocapitalize="characters" maxlength="12">
       <div class="alts" id="m-alts"></div>
     </div>
-    <p class="photo-cap">Full photo — make sure the crop above found the sign,
-    not some other text (house number, bin label&hellip;):</p>
-    <img class="crop" id="m-photo" alt="full photo" hidden>
     <button class="primary big" id="m-submit">Use this code</button>
     <button class="ghost" id="m-restart">Start over</button>
   </div>
@@ -163,10 +159,11 @@
     <div class="card">
       <p class="tag">Your code</p>
       <div class="code" id="d-code"></div>
+      <p class="tag" id="d-status"></p>
     </div>
     <a class="linkbtn primary big" id="d-link" href="#" target="_blank" rel="noopener"
        style="padding:1.1rem;border-radius:12px;background:var(--accent);color:#fff;font-weight:600">
-       Submit at aadl.org &rarr;</a>
+       Open aadl.org &rarr;</a>
     <button class="ghost" id="d-copy">Copy code</button>
     <button class="ghost" id="d-new">&#128247; New photo</button>
   </div>
@@ -174,6 +171,22 @@
   <div class="view" id="v-error">
     <p class="err" id="e-msg"></p>
     <button class="primary big" id="e-retry">Start over</button>
+  </div>
+
+  <div class="view" id="v-howto">
+    <div class="card">
+      <p><b>How it works</b></p>
+      <p>&#128247; <b>Photograph a sign.</b> Get close — fill the frame with
+      the sign, and keep house numbers or bin labels out of the shot.</p>
+      <p>&#128269; <b>The app reads the handwriting.</b> Most codes are read
+      instantly; tricky ones get a closer look from Claude.</p>
+      <p>&#127942; <b>Connect your AADL account</b> and codes are submitted
+      automatically for every player you check — or skip that, and you'll get
+      a prefilled aadl.org link to submit each code yourself.</p>
+      <p>&#9997;&#65039; <b>If a read is wrong</b> or AADL rejects it, you can
+      always fix the code by hand.</p>
+    </div>
+    <button class="primary big" id="h-done">Got it</button>
   </div>
 
   <div class="view" id="v-about">
@@ -189,6 +202,7 @@
   </div>
 </main>
 <footer>
+  <a href="#" id="f-howto">How-to</a> &middot;
   <a href="#" id="f-about">About</a> &middot;
   <a href="https://github.com/ctb3/aadl-sg-helper" target="_blank" rel="noopener">GitHub</a> &middot;
   v{{VERSION}}
@@ -198,6 +212,10 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const norm = (s) => (s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+// Game codes are [A-Z0-9] and at most 12 characters — any longer read is
+// known-wrong before we ever spend a submission on it.
+const MAX_CODE = 12;
+const validCode = (s) => norm(s).length > 0 && norm(s).length <= MAX_CODE;
 
 let state = null;
 
@@ -226,16 +244,18 @@ function fail(err) {
 }
 
 function home() {
-  if (state && state.photoUrl) URL.revokeObjectURL(state.photoUrl);
   state = null;
   $("file").value = "";
   // Drop the big crop data-URLs so successive sessions don't accumulate
   // decoded bitmaps on a memory-constrained phone.
   $("r-crop").removeAttribute("src");
   $("m-crop").removeAttribute("src");
-  $("m-photo").removeAttribute("src");
   renderAccounts();
   show("v-home");
+  if (!localStorage.getItem("howtoSeen")) {
+    overlayReturn = "v-home";
+    show("v-howto");
+  }
 }
 
 // ---- AADL accounts (cookie blobs live only on this phone; see aadl.ts) ----
@@ -269,7 +289,7 @@ function renderAccounts() {
       if (acct.expired) {
         const re = document.createElement("button");
         re.textContent = "Reconnect";
-        re.onclick = () => { $("c-user").value = acct.label; show("v-connect"); };
+        re.onclick = () => { $("c-user").value = acct.label; openConnect(); };
         btns.append(re, " ");
       }
       const rm = document.createElement("button");
@@ -443,26 +463,34 @@ async function toJpeg(file) {
   return { ...out, fileReadMs, encodeMs: out.drawMs + out.blobMs };
 }
 
-function presentResult(tier, code, conf) {
-  state.presented = { tier, code };
+// Only ever shows the tier-1 read, and only on the no-account path — with an
+// account connected everything auto-submits, and Claude's read goes straight
+// to the manual screen as its prefill.
+function presentResult(code) {
+  state.presented = { tier: 1, code };
   $("r-crop").src = state.cropDataUrl;
   $("r-code").textContent = code || "(nothing read)";
-  $("r-tag").textContent =
-    (tier === 1 ? "Instant read (GCV)" : "Model read (Claude)") +
-    (conf != null ? " · worst-glyph conf " + conf.toFixed(2) : "");
+  const tooLong = norm(code).length > MAX_CODE;
+  $("r-tag").textContent = tooLong
+    ? "Longer than any real code (max " + MAX_CODE + " characters) — probably picked up other text."
+    : "";
+  $("r-tag").hidden = !tooLong;
   show("v-result");
 }
 
 function showManual(notice) {
-  const prefill = (state.tier2 && state.tier2.code) || state.tier1.code || "";
+  const prefill = norm((state.tier2 && state.tier2.code) || state.tier1.code || "");
+  $("m-head").textContent = prefill
+    ? "Our best guess — submit it, or fix it here:"
+    : "Type the code as written:";
   $("m-note").textContent = notice || "";
   $("m-note").hidden = !notice;
   $("m-crop").src = state.cropDataUrl;
-  if (state.photoUrl) $("m-photo").src = state.photoUrl;
-  $("m-photo").hidden = !state.photoUrl;
   $("m-input").value = prefill;
+  $("m-submit").textContent = activeAccounts().length
+    ? "✓ Submit to AADL" : "✓ Submit at aadl.org";
   const alts = (state.tier2 && state.tier2.alternatives) || [];
-  $("m-alts").replaceChildren(...alts.filter((a) => norm(a) && norm(a) !== norm(prefill)).map((a) => {
+  $("m-alts").replaceChildren(...alts.filter((a) => validCode(a) && norm(a) !== prefill).map((a) => {
     const b = document.createElement("button");
     b.textContent = norm(a);
     b.onclick = () => { $("m-input").value = norm(a); };
@@ -484,7 +512,6 @@ async function onPhoto(file) {
     show("v-busy", prepMsg());
     let t = Date.now();
     const jpeg = await toJpeg(file);
-    state.photoUrl = URL.createObjectURL(jpeg.blob);
     Object.assign(state.timings, {
       prepMs: Date.now() - t,
       fileReadMs: jpeg.fileReadMs,
@@ -520,59 +547,81 @@ async function onPhoto(file) {
     state.tier2 = res.tier2;
     state.cropDataUrl = res.cropDataUrl;
 
-    if (res.tier1.gatePassed) {
+    if (res.tier1.gatePassed && validCode(res.tier1.code)) {
       if (autoMode()) {
         state.presented = { tier: 1, code: res.tier1.code };
         state.verdicts.push({ tier: 1, code: res.tier1.code, minConf: res.tier1.minConf, action: "auto_submitted" });
         return finish(res.tier1.code, "tier1_auto");
       }
-      presentResult(1, res.tier1.code, res.tier1.minConf);
-    } else {
-      state.verdicts.push({ tier: 1, code: res.tier1.code, minConf: res.tier1.minConf, action: "auto_skipped_gate" });
-      if (autoMode()) {
-        const code2 = norm(res.tier2.code);
-        if (code2) {
-          state.presented = { tier: 2, code: code2 };
-          state.verdicts.push({ tier: 2, code: code2, action: "auto_submitted" });
-          return finish(code2, "tier2_auto");
-        }
-        return showManual(); // both readers came up empty — the kept fallback
-      }
-      presentResult(2, res.tier2.code);
+      return presentResult(res.tier1.code);
     }
+
+    // Tier 1 is unusable: gate failure (server already ran tier 2) or a read
+    // longer than any valid code (gate passed, so tier 2 hasn't run yet).
+    state.verdicts.push({
+      tier: 1, code: res.tier1.code, minConf: res.tier1.minConf,
+      action: res.tier1.gatePassed ? "auto_skipped_toolong" : "auto_skipped_gate",
+    });
+    if (!state.tier2) {
+      show("v-busy", "Asking Claude for a closer look…");
+      t = Date.now();
+      const r = await api("/api/escalate", { sessionId: state.sessionId });
+      state.timings.escalateMs = Date.now() - t;
+      state.tier2 = r.tier2;
+    }
+    const code2 = norm(state.tier2.code);
+    if (autoMode()) {
+      if (validCode(code2)) {
+        state.presented = { tier: 2, code: code2 };
+        state.verdicts.push({ tier: 2, code: code2, action: "auto_submitted" });
+        return finish(code2, "tier2_auto");
+      }
+      return showManual(); // nothing usable from either reader — the kept fallback
+    }
+    showManual(); // no-account: Claude's guess is the manual screen's prefill
   } catch (err) { fail(err); }
 }
 
+// "Try harder" on the tier-1 result: ask Claude, land on the manual screen
+// with its read prefilled.
 async function reject() {
   const { tier, code } = state.presented;
   state.verdicts.push({ tier, code, action: "rejected" });
   try {
-    if (tier === 1) {
-      show("v-busy", "Asking Claude for a closer look…");
-      const t = Date.now();
-      const r = await api("/api/escalate", { sessionId: state.sessionId });
-      state.timings.escalateMs = Date.now() - t;
-      state.tier2 = r.tier2;
-      presentResult(2, r.tier2.code);
-    } else {
-      showManual();
-    }
+    show("v-busy", "Asking Claude for a closer look…");
+    const t = Date.now();
+    const r = await api("/api/escalate", { sessionId: state.sessionId });
+    state.timings.escalateMs = Date.now() - t;
+    state.tier2 = r.tier2;
+    showManual();
   } catch (err) { fail(err); }
 }
 
-async function finish(code, source) {
+// No-account submission: open aadl.org with the code prefilled (AADL's own
+// QR flow). Called synchronously from a click so window.open keeps its
+// user-gesture status; when it's blocked anyway, v-done's link is the retry.
+function openHandoff(code) {
+  const url = handoffUrl(code);
+  const win = window.open(url, "_blank");
+  $("d-code").textContent = code;
+  $("d-link").href = url;
+  $("d-status").textContent = win
+    ? "aadl.org opened in a new tab with your code prefilled."
+    : "Tap below to open aadl.org with your code prefilled:";
+  show("v-done");
+}
+
+function finish(code, source) {
   try {
-    show("v-busy", "Saving…");
-    await api("/api/verdict", {
+    // Telemetry only — save it in the background, never block the user.
+    api("/api/verdict", {
       sessionId: state.sessionId,
       record: { verdicts: state.verdicts, finalCode: code, source, clientMs: Date.now() - state.t0, timings: state.timings },
-    });
+    }).catch(() => {});
     if (activeAccounts().length) {
-      await submitToAadl(code);
+      submitToAadl(code).catch(fail);
     } else {
-      $("d-code").textContent = code;
-      $("d-link").href = handoffUrl(code);
-      show("v-done");
+      openHandoff(code);
     }
   } catch (err) { fail(err); }
 }
@@ -637,7 +686,7 @@ async function submitToAadl(code) {
   if (rejected && ocrCode && !state.tier2 && !state.autoEscalated) {
     state.autoEscalated = true;
     state.verdicts.push({ tier: state.presented.tier, code, action: "aadl_rejected" });
-    show("v-busy", "AADL didn't recognize it — asking Claude…");
+    show("v-busy", "AADL didn't recognize it, asking Claude…");
     const t2 = Date.now();
     const r = await api("/api/escalate", { sessionId: state.sessionId });
     state.timings.escalateMs = Date.now() - t2;
@@ -673,10 +722,7 @@ async function submitToAadl(code) {
     if (res.results.length > 1) head.append(r.label + ": ");
     head.append(badge);
     div.append(head);
-    // Success boilerplate lives in the hidden-message block above; raw
-    // messages stay only where they carry diagnostic detail.
     for (const m of r.messages || []) {
-      if (m.outcome === "success") continue;
       const p = document.createElement("p");
       p.className = "sub-msg";
       p.textContent = m.text;
@@ -714,6 +760,11 @@ $("r-reject").onclick = reject;
 $("m-submit").onclick = () => {
   const code = norm($("m-input").value);
   if (!code) return;
+  if (code.length > MAX_CODE) {
+    $("m-note").textContent = "Codes are at most " + MAX_CODE + " characters — trim it down.";
+    $("m-note").hidden = false;
+    return;
+  }
   state.verdicts.push({ tier: 3, code, action: "manual_entry" });
   finish(code, "manual");
 };
@@ -722,7 +773,22 @@ $("d-copy").onclick = async () => {
   catch { /* clipboard denied; user can long-press */ }
 };
 $("d-new").onclick = home;
-$("btn-connect").onclick = () => { $("c-err").hidden = true; show("v-connect"); };
+// The warning card fronts the login form every time — accepting swaps the
+// form in without clearing anything already typed.
+function setConnectWarning(showWarn) {
+  $("c-warn").hidden = !showWarn;
+  $("c-accept").hidden = !showWarn;
+  $("c-form").hidden = showWarn;
+  $("c-connect").hidden = showWarn;
+}
+function openConnect() {
+  $("c-err").hidden = true;
+  setConnectWarning(true);
+  show("v-connect");
+}
+$("btn-connect").onclick = openConnect;
+$("c-accept").onclick = () => setConnectWarning(false);
+$("c-reread").onclick = () => setConnectWarning(true);
 $("c-connect").onclick = connectAccount;
 $("c-cancel").onclick = home;
 $("s-new").onclick = home;
@@ -731,16 +797,18 @@ $("r-restart").onclick = home;
 $("m-restart").onclick = home;
 $("e-retry").onclick = home;
 
-// About overlays whatever was on screen and Back returns to it — opening it
-// mid-session must not reset state.
-let aboutReturn = "v-home";
-$("f-about").onclick = (e) => {
-  e.preventDefault();
+// About/How-to overlay whatever was on screen and return to it — opening
+// them mid-session must not reset state.
+let overlayReturn = "v-home";
+function overlay(viewId) {
   const active = document.querySelector(".view.active");
-  if (active && active.id !== "v-about") aboutReturn = active.id;
-  show("v-about");
-};
-$("a-back").onclick = () => show(aboutReturn);
+  if (active && active.id !== "v-about" && active.id !== "v-howto") overlayReturn = active.id;
+  show(viewId);
+}
+$("f-about").onclick = (e) => { e.preventDefault(); overlay("v-about"); };
+$("f-howto").onclick = (e) => { e.preventDefault(); overlay("v-howto"); };
+$("a-back").onclick = () => show(overlayReturn);
+$("h-done").onclick = () => { localStorage.setItem("howtoSeen", "1"); show(overlayReturn); };
 
 localStorage.getItem("pin") ? home() : show("v-pin");
 </script>

@@ -1,6 +1,6 @@
 {
   "name": "aadl-sg-helper",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "description": "Handwriting-extraction bake-off harness for AADL Summer Game sign codes",

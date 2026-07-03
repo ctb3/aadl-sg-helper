@@ -45,19 +45,26 @@
   .acct-head { display:flex; justify-content:space-between; align-items:center; }
   .acct button { font-size:.8rem; padding:.3rem .6rem; background:#eee; }
   .acct label { display:inline-flex; align-items:center; gap:.3rem; margin:.3rem .8rem 0 0; }
-  .toggle { display:flex; align-items:center; gap:.6rem; font-size:.9rem; color:var(--muted); }
-  .sub-line { padding:.5rem 0; border-top:1px solid #eee; }
+  .sub-line { padding:.5rem 0; border-top:1px solid #eee; font-size:1.05rem; }
   .sub-line:first-child { border-top:none; }
   .sub-ok { color:var(--accent); font-weight:600; }
   .sub-warn { color:#8a6d00; font-weight:600; }
   .sub-bad { color:var(--danger); font-weight:600; }
   .sub-msg { font-size:.8rem; color:var(--muted); margin:.2rem 0 0; }
   .linkbtn { display:block; text-align:center; text-decoration:none; }
+  .hidden-msg { font-size:1.15rem; font-style:italic; text-align:center; color:#0a4d2c;
+    background:#eaf6ef; border:1px solid #bfe3cd; border-radius:10px; padding:.8rem; margin:.4rem 0 0; }
+  .s-head-ok { font-size:1.35rem; font-weight:700; color:var(--accent); text-align:center; margin:0; }
+  .m-note { color:#8a6d00; font-weight:600; text-align:center; margin:0; }
+  .photo-cap { font-size:.75rem; color:var(--muted); text-align:center; margin:0; }
+  details.warn { font-size:.9rem; color:var(--muted); margin:.5rem 0; }
+  details.warn summary { cursor:pointer; color:#8a6d00; font-weight:600; }
+  footer { text-align:center; font-size:.8rem; color:var(--muted); padding:0 1rem 1.2rem; }
+  footer a { color:var(--muted); }
 </style>
 <body>
 <main>
-  <h1>AADL Summer Game — code helper
-    <span style="font-weight:400;font-size:.7rem;opacity:.7">v{{VERSION}}</span></h1>
+  <h1>AADL Summer Game — code helper</h1>
 
   <div class="view" id="v-pin">
     <div class="card">
@@ -77,10 +84,8 @@
       <div id="acct-list"><p class="tag">No AADL account connected — codes will
       open aadl.org for you to submit yourself.</p></div>
       <button class="ghost" id="btn-connect" style="width:100%">+ Connect AADL account</button>
-      <label class="toggle" id="auto-row" hidden>
-        <input type="checkbox" id="auto-toggle">
-        Fully automatic: submit instant reads without confirming
-      </label>
+      <p class="tag" id="auto-note" hidden>Codes are read and submitted automatically
+      for every checked player — you only step in if AADL rejects a read.</p>
     </div>
   </div>
 
@@ -89,6 +94,17 @@
       <p>Log in with your aadl.org account. The password is used once to sign
       in and is not stored anywhere — this phone keeps only the signed-in
       session.</p>
+      <details class="warn">
+        <summary>&#9888;&#65039; Before you type your library password&hellip;</summary>
+        <p>Your password passes through this app's server once to log in to
+        aadl.org. It is not stored or logged anywhere — but you're taking the
+        operator's word for that, and that's an inherently insecure thing to
+        ask of you.</p>
+        <p>If you'd rather not, that's completely fine: cancel this screen and
+        everything still works without an account — the app reads the code
+        from your photo and hands you a prefilled aadl.org link so you can
+        submit it yourself, signed in on your own browser.</p>
+      </details>
       <p><input type="text" id="c-user" placeholder="Username or barcode"
         autocomplete="username" autocapitalize="none"></p>
       <p><input type="password" id="c-pass" placeholder="Password"
@@ -101,11 +117,11 @@
 
   <div class="view" id="v-submitted">
     <div class="card">
-      <p class="tag">Submitted to AADL</p>
+      <p class="tag" id="s-tag">Submitted to AADL</p>
       <div class="code" id="s-code"></div>
+      <p class="hidden-msg" id="s-hidden" hidden></p>
       <div id="s-results"></div>
     </div>
-    <button class="primary" id="s-escalate" hidden>Not recognized — ask Claude for a closer look</button>
     <button class="danger" id="s-edit" hidden>&#9998; Fix the code by hand</button>
     <button class="primary big" id="s-new">&#128247; New photo</button>
   </div>
@@ -122,19 +138,23 @@
       <p class="tag" id="r-tag"></p>
     </div>
     <div class="row">
-      <button class="danger" id="r-reject">&#10007; Wrong</button>
-      <button class="primary" id="r-approve">&#10003; Correct</button>
+      <button class="danger" id="r-reject">&#8635; Try again</button>
+      <button class="primary" id="r-approve">&#10003; Use this code</button>
     </div>
     <button class="ghost" id="r-restart">Start over</button>
   </div>
 
   <div class="view" id="v-manual">
+    <p class="m-note" id="m-note" hidden></p>
     <img class="crop" id="m-crop" alt="detected code region">
     <div class="card">
       <p>Type the code as written:</p>
       <input type="text" id="m-input" autocomplete="off" autocapitalize="characters" maxlength="16">
       <div class="alts" id="m-alts"></div>
     </div>
+    <p class="photo-cap">Full photo — make sure the crop above found the sign,
+    not some other text (house number, bin label&hellip;):</p>
+    <img class="crop" id="m-photo" alt="full photo" hidden>
     <button class="primary big" id="m-submit">Use this code</button>
     <button class="ghost" id="m-restart">Start over</button>
   </div>
@@ -155,7 +175,24 @@
     <p class="err" id="e-msg"></p>
     <button class="primary big" id="e-retry">Start over</button>
   </div>
+
+  <div class="view" id="v-about">
+    <div class="card">
+      <p><b>About</b></p>
+      <p>Point your camera at an AADL Summer Game lawn sign and this app reads
+      the handwritten code and submits it to your Summer Game account(s) — or
+      hands you a prefilled aadl.org link if you'd rather submit it yourself.</p>
+      <p>A personal project, not affiliated with the Ann Arbor District
+      Library. (More to come here.)</p>
+    </div>
+    <button class="ghost" id="a-back">&larr; Back</button>
+  </div>
 </main>
+<footer>
+  <a href="#" id="f-about">About</a> &middot;
+  <a href="https://github.com/ctb3/aadl-sg-helper" target="_blank" rel="noopener">GitHub</a> &middot;
+  v{{VERSION}}
+</footer>
 
 <script>
 "use strict";
@@ -163,6 +200,17 @@ const $ = (id) => document.getElementById(id);
 const norm = (s) => (s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
 let state = null;
+
+// Shown while the photo is being re-encoded — edit freely, one is picked at random.
+const PREP_MESSAGES = [
+  "Warming up the code goggles…",
+  "Squinting at the handwriting…",
+  "Consulting the marker-fume oracle…",
+  "Deciphering yard-sign penmanship…",
+  "Enhance… enhance… enhance…",
+  "Untangling loops from lowercase L's…",
+];
+const prepMsg = () => PREP_MESSAGES[Math.floor(Math.random() * PREP_MESSAGES.length)];
 
 function show(view, busyMsg) {
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
@@ -178,12 +226,14 @@ function fail(err) {
 }
 
 function home() {
+  if (state && state.photoUrl) URL.revokeObjectURL(state.photoUrl);
   state = null;
   $("file").value = "";
   // Drop the big crop data-URLs so successive sessions don't accumulate
   // decoded bitmaps on a memory-constrained phone.
   $("r-crop").removeAttribute("src");
   $("m-crop").removeAttribute("src");
+  $("m-photo").removeAttribute("src");
   renderAccounts();
   show("v-home");
 }
@@ -194,7 +244,10 @@ const getAccounts = () => JSON.parse(localStorage.getItem("aadlAccounts") || "[]
 const saveAccounts = (a) => localStorage.setItem("aadlAccounts", JSON.stringify(a));
 // Accounts that are connected, unexpired, and have at least one player picked.
 const activeAccounts = () => getAccounts().filter((a) => !a.expired && a.selectedPids.length);
-const autoMode = () => localStorage.getItem("autoMode") === "1" && activeAccounts().length > 0;
+// A connected account means fully automatic: reads are submitted without
+// confirmation, and the user only steps in when AADL rejects one. The
+// verify-first flow exists only for the no-account handoff path.
+const autoMode = () => activeAccounts().length > 0;
 const handoffUrl = (code) =>
   "https://aadl.org/summergame/player/0/gamecode?text=" + encodeURIComponent(code);
 
@@ -242,8 +295,7 @@ function renderAccounts() {
       return div;
     }));
   }
-  $("auto-row").hidden = accounts.length === 0;
-  $("auto-toggle").checked = localStorage.getItem("autoMode") === "1";
+  $("auto-note").hidden = accounts.length === 0;
 }
 
 async function connectAccount() {
@@ -401,9 +453,13 @@ function presentResult(tier, code, conf) {
   show("v-result");
 }
 
-function showManual() {
+function showManual(notice) {
   const prefill = (state.tier2 && state.tier2.code) || state.tier1.code || "";
+  $("m-note").textContent = notice || "";
+  $("m-note").hidden = !notice;
   $("m-crop").src = state.cropDataUrl;
+  if (state.photoUrl) $("m-photo").src = state.photoUrl;
+  $("m-photo").hidden = !state.photoUrl;
   $("m-input").value = prefill;
   const alts = (state.tier2 && state.tier2.alternatives) || [];
   $("m-alts").replaceChildren(...alts.filter((a) => norm(a) && norm(a) !== norm(prefill)).map((a) => {
@@ -425,9 +481,10 @@ function prefetchSession() {
 async function onPhoto(file) {
   try {
     state = { t0: Date.now(), verdicts: [], timings: {} };
-    show("v-busy", "Preparing photo…");
+    show("v-busy", prepMsg());
     let t = Date.now();
     const jpeg = await toJpeg(file);
+    state.photoUrl = URL.createObjectURL(jpeg.blob);
     Object.assign(state.timings, {
       prepMs: Date.now() - t,
       fileReadMs: jpeg.fileReadMs,
@@ -472,6 +529,15 @@ async function onPhoto(file) {
       presentResult(1, res.tier1.code, res.tier1.minConf);
     } else {
       state.verdicts.push({ tier: 1, code: res.tier1.code, minConf: res.tier1.minConf, action: "auto_skipped_gate" });
+      if (autoMode()) {
+        const code2 = norm(res.tier2.code);
+        if (code2) {
+          state.presented = { tier: 2, code: code2 };
+          state.verdicts.push({ tier: 2, code: code2, action: "auto_submitted" });
+          return finish(code2, "tier2_auto");
+        }
+        return showManual(); // both readers came up empty — the kept fallback
+      }
       presentResult(2, res.tier2.code);
     }
   } catch (err) { fail(err); }
@@ -527,6 +593,23 @@ const OUTCOME_TEXT = {
   unknown: ["sub-warn", "unclear response &mdash; check aadl.org"],
 };
 
+// The success message reads `[player] redeemed code "X" for 100 Summer Game
+// 2026 points. You found a Lawn Code on [road]! [creator's hidden message]` —
+// strip the boilerplate and surface whatever the code's creator wrote.
+function hiddenMessage(results) {
+  for (const r of results) {
+    for (const m of r.messages || []) {
+      if (m.outcome !== "success") continue;
+      const rest = m.text
+        .replace(/^.*?redeemed code "[A-Z0-9]+" for -?\d+[^.!]*[.!]\s*/i, "")
+        .replace(/^You found an? [\w' -]{0,40}Code (on|at|in|near) [^.!?]*[.!?]\s*/i, "")
+        .trim();
+      if (rest) return rest;
+    }
+  }
+  return "";
+}
+
 async function submitToAadl(code) {
   const accounts = activeAccounts();
   show("v-busy", "Submitting to AADL…");
@@ -537,7 +620,6 @@ async function submitToAadl(code) {
     accounts: accounts.map((a) => ({ cookies: a.cookies, pids: a.selectedPids, label: a.label })),
   });
   state.timings.submitMs = (state.timings.submitMs || 0) + (Date.now() - t);
-  state.lastSubmitted = code;
 
   const all = getAccounts();
   for (const r of res.results) {
@@ -548,11 +630,11 @@ async function submitToAadl(code) {
   }
   saveAccounts(all);
 
-  // The oracle: AADL not recognizing an OCR code is the tier-2 trigger.
+  // The oracle: AADL not recognizing an OCR code is the tier-2 trigger; once
+  // tier 2 has had its shot, the manual fallback is all that's left.
   const rejected = res.results.some((r) => r.outcome === "not_recognized" || r.outcome === "close_match");
   const ocrCode = state.presented && !state.verdicts.some((v) => v.action === "manual_entry");
-  const canEscalate = rejected && ocrCode && !state.tier2 && !state.autoEscalated;
-  if (rejected && autoMode() && canEscalate) {
+  if (rejected && ocrCode && !state.tier2 && !state.autoEscalated) {
     state.autoEscalated = true;
     state.verdicts.push({ tier: state.presented.tier, code, action: "aadl_rejected" });
     show("v-busy", "AADL didn't recognize it — asking Claude…");
@@ -565,10 +647,20 @@ async function submitToAadl(code) {
       state.verdicts.push({ tier: 2, code: newCode, action: "auto_submitted" });
       return finish(newCode, "tier2_auto");
     }
-    return showManual();
+    return showManual('AADL didn’t recognize “' + code + '” — check it against the photo:');
+  }
+  if (rejected && ocrCode) {
+    state.verdicts.push({ tier: state.presented.tier, code, action: "aadl_rejected" });
+    return showManual('AADL didn’t recognize “' + code + '” — check it against the photo:');
   }
 
   $("s-code").textContent = code;
+  const hidden = hiddenMessage(res.results);
+  $("s-hidden").textContent = hidden;
+  $("s-hidden").hidden = !hidden;
+  const allOk = res.results.every((r) => r.outcome === "success" || r.outcome === "already_redeemed");
+  $("s-tag").textContent = allOk ? "✓ Code redeemed" : "Submitted to AADL";
+  $("s-tag").className = allOk ? "s-head-ok" : "tag";
   $("s-results").replaceChildren(...res.results.map((r) => {
     const [cls, label] = OUTCOME_TEXT[r.outcome] || OUTCOME_TEXT.unknown;
     const div = document.createElement("div");
@@ -581,7 +673,10 @@ async function submitToAadl(code) {
     if (res.results.length > 1) head.append(r.label + ": ");
     head.append(badge);
     div.append(head);
+    // Success boilerplate lives in the hidden-message block above; raw
+    // messages stay only where they carry diagnostic detail.
     for (const m of r.messages || []) {
+      if (m.outcome === "success") continue;
       const p = document.createElement("p");
       p.className = "sub-msg";
       p.textContent = m.text;
@@ -595,22 +690,8 @@ async function submitToAadl(code) {
     }
     return div;
   }));
-  $("s-escalate").hidden = !canEscalate;
   $("s-edit").hidden = !rejected;
   show("v-submitted");
-}
-
-async function escalateAfterReject() {
-  try {
-    state.autoEscalated = true;
-    state.verdicts.push({ tier: state.presented.tier, code: state.lastSubmitted, action: "aadl_rejected" });
-    show("v-busy", "Asking Claude for a closer look…");
-    const t = Date.now();
-    const r = await api("/api/escalate", { sessionId: state.sessionId });
-    state.timings.escalateMs = Date.now() - t;
-    state.tier2 = r.tier2;
-    presentResult(2, r.tier2.code);
-  } catch (err) { fail(err); }
 }
 
 // ---- wiring ----
@@ -644,13 +725,22 @@ $("d-new").onclick = home;
 $("btn-connect").onclick = () => { $("c-err").hidden = true; show("v-connect"); };
 $("c-connect").onclick = connectAccount;
 $("c-cancel").onclick = home;
-$("auto-toggle").onchange = (e) => localStorage.setItem("autoMode", e.target.checked ? "1" : "0");
 $("s-new").onclick = home;
-$("s-escalate").onclick = escalateAfterReject;
-$("s-edit").onclick = showManual;
+$("s-edit").onclick = () => showManual();
 $("r-restart").onclick = home;
 $("m-restart").onclick = home;
 $("e-retry").onclick = home;
+
+// About overlays whatever was on screen and Back returns to it — opening it
+// mid-session must not reset state.
+let aboutReturn = "v-home";
+$("f-about").onclick = (e) => {
+  e.preventDefault();
+  const active = document.querySelector(".view.active");
+  if (active && active.id !== "v-about") aboutReturn = active.id;
+  show("v-about");
+};
+$("a-back").onclick = () => show(aboutReturn);
 
 localStorage.getItem("pin") ? home() : show("v-pin");
 </script>

@@ -26,8 +26,15 @@ import { runTier1, runTier2 } from "./pipeline";
 const s3 = new S3Client({ region: config.awsRegion });
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "public");
 
+// Deploys bump package.json (infra/deploy.sh); the version tags the page (so a
+// stale cached client is visible at a glance), the S3 prefix, and extract.json.
+const APP_VERSION: string = JSON.parse(
+  fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../package.json"), "utf8"),
+).version;
+
 const SESSION_ID_RE = /^\d{10,16}-[a-f0-9]{8}$/;
-const sessionKey = (id: string, name: string): string => `sessions/${id}/${name}`;
+const sessionKey = (id: string, name: string): string =>
+  `sessions/v${APP_VERSION}/${id}/${name}`;
 
 function pinOk(req: http.IncomingMessage): boolean {
   if (!config.appPin) return true; // no PIN configured (local dev)
@@ -105,6 +112,7 @@ async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
 
   await s3PutJson(sessionKey(sessionId, "extract.json"), {
     at: new Date().toISOString(),
+    version: APP_VERSION,
     photo: { ...(await dims(photo)), bytes: photo.length },
     tier1, // includes raw GCV words/geometry for later analysis
     tier2,
@@ -148,8 +156,15 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
 
   if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(fs.readFileSync(path.join(publicDir, "index.html")));
+    // no-store: a phone-cached stale client silently dropped a whole field
+    // batch's instrumentation once. The page is ~12KB; always fetch fresh.
+    res.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    res.end(
+      fs.readFileSync(path.join(publicDir, "index.html"), "utf8").replaceAll("{{VERSION}}", APP_VERSION),
+    );
     return;
   }
   if (req.method === "GET" && url.pathname === "/favicon.ico") {
@@ -189,6 +204,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(config.appPort, () => {
-  console.log(`app listening on http://localhost:${config.appPort}`);
+  console.log(`app v${APP_VERSION} listening on http://localhost:${config.appPort}`);
   console.log(`  bucket=${config.sessionsBucket || "(unset!)"} pin=${config.appPin ? "set" : "OFF"}`);
 });

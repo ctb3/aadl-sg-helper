@@ -41,7 +41,8 @@
 </style>
 <body>
 <main>
-  <h1>AADL Summer Game — code helper</h1>
+  <h1>AADL Summer Game — code helper
+    <span style="font-weight:400;font-size:.7rem;opacity:.7">v{{VERSION}}</span></h1>
 
   <div class="view" id="v-pin">
     <div class="card">
@@ -151,18 +152,25 @@ async function api(path, body) {
 // Tier-2 crops from this too — measured identical to original-res crops
 // (38/39 both, out/runs/…-gcvcrop-e2400src), for ~1/8 the upload bytes.
 const UPLOAD_MAX_EDGE = 2400;
-// Returns {blob, decodeMs, encodeMs} — the split matters: field prep times are
-// bimodal (0.3-1s vs 10-13s) and we need to see which half stalls.
+// Returns {blob, fileReadMs, decodeMs, encodeMs} — the split matters: field
+// prep stalls at a constant ~13.4s on some captures, and the three candidates
+// are the camera content-provider handing over bytes (fileReadMs), the image
+// decode, and the canvas encode.
 async function toJpeg(file) {
   let t = Date.now();
+  const rawBytes = await file.arrayBuffer();
+  const fileReadMs = Date.now() - t;
+  const raw = new Blob([rawBytes], { type: file.type || "image/jpeg" });
+
+  t = Date.now();
   let img;
-  try { img = await createImageBitmap(file); }
+  try { img = await createImageBitmap(raw); }
   catch {
     img = await new Promise((res, rej) => {
       const i = new Image();
       i.onload = () => res(i);
       i.onerror = () => rej(new Error("could not decode the photo"));
-      i.src = URL.createObjectURL(file);
+      i.src = URL.createObjectURL(raw);
     });
   }
   const decodeMs = Date.now() - t;
@@ -174,7 +182,7 @@ async function toJpeg(file) {
   c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
   const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.85));
   if (!blob) throw new Error("could not encode the photo");
-  return { blob, decodeMs, encodeMs: Date.now() - t };
+  return { blob, fileReadMs, decodeMs, encodeMs: Date.now() - t };
 }
 
 function presentResult(tier, code, conf) {
@@ -216,6 +224,7 @@ async function onPhoto(file) {
     const jpeg = await toJpeg(file);
     Object.assign(state.timings, {
       prepMs: Date.now() - t,
+      fileReadMs: jpeg.fileReadMs,
       decodeMs: jpeg.decodeMs,
       encodeMs: jpeg.encodeMs,
       fileType: file.type || "?",

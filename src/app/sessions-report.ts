@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { config } from "../config";
 import { normalize } from "../score";
@@ -7,10 +8,13 @@ import { normalize } from "../score";
  * accuracy + stage timings. Ground truth = the user's approved/manual final
  * code (the verdict IS the label — that's the point of the app).
  *
- *   npx tsx src/app/sessions-report.ts [prefix]   (default sessions/v2/)
+ *   npx tsx src/app/sessions-report.ts [prefix]
+ * Default prefix = the current app version's folder (sessions/v<package.json
+ * version>/); pass an explicit prefix for older batches.
  */
 
-const prefix = process.argv[2] ?? "sessions/v2/";
+const pkgVersion: string = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+const prefix = process.argv[2] ?? `sessions/v${pkgVersion}/`;
 const s3 = new S3Client({ region: config.awsRegion });
 const bucket = config.sessionsBucket;
 
@@ -163,9 +167,9 @@ async function main(): Promise<void> {
     for (const r of slow) {
       const t = r.timings as any;
       console.log(
-        `${r.id.slice(0, 13)}  prep=${t.prepMs}ms decode=${t.decodeMs ?? "?"}ms ` +
-        `encode=${t.encodeMs ?? "?"}ms fileAge=${t.fileAgeMs ?? "?"}ms ` +
-        `type=${t.fileType ?? "?"} bytes=${t.fileBytes ?? "?"}`,
+        `${r.id.slice(0, 13)}  prep=${t.prepMs}ms fileRead=${t.fileReadMs ?? "?"}ms ` +
+        `decode=${t.decodeMs ?? "?"}ms encode=${t.encodeMs ?? "?"}ms ` +
+        `fileAge=${t.fileAgeMs ?? "?"}ms type=${t.fileType ?? "?"} bytes=${t.fileBytes ?? "?"}`,
       );
     }
   }

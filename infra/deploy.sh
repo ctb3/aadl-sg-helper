@@ -15,6 +15,12 @@ FN="${APP_FUNCTION_NAME:-aadl-sg-app}"
 REPO="$FN"
 ROLE="$FN-role"
 
+# Every deploy is a new version: bumps package.json (commit it with the
+# changeset it shipped). The server bakes it into the page, the S3 session
+# prefix (sessions/v<version>/), and extract.json.
+VERSION=$(npm version patch --no-git-tag-version | tr -d 'v\r\n')
+echo "== version v$VERSION"
+
 aws()  { aws.exe --profile "$PROFILE" --region "$REGION" "$@"; }
 awst() { aws --output text "$@" | tr -d '\r'; }
 
@@ -102,4 +108,4 @@ aws lambda add-permission --function-name "$FN" --statement-id public-invoke \
 
 URL=$(awst lambda get-function-url-config --function-name "$FN" --query FunctionUrl)
 echo ""
-echo "deployed: $URL"
+echo "deployed v$VERSION: $URL"

@@ -49,6 +49,11 @@ submission yet. Client uploads full-res JPEG straight to S3 via presigned PUT
 (dodges the 6MB Function URL cap, keeps tier-2 crops high-res); every session
 logs photo/crop/results/verdicts under s3://aadl-sg-sessions-…/sessions/ for
 future labeling. Access gate = APP_PIN (.env) checked server-side.
+Every deploy bumps package.json's version (deploy.sh, commit it with the
+changeset): shown on the page, prefixes sessions (`sessions/v<version>/`),
+recorded in extract.json; sessions-report.ts defaults to the current
+version's prefix. GET / is `Cache-Control: no-store` — a phone-cached stale
+client once silently dropped a batch's instrumentation.
 Deploy account 619467956318 (us-east-2, profile service-aadl-sg-helper; its
 inline `aadl-sg-app-deploy` IAM policy = infra/deploy-user-policy.json).
 Gotchas burned in already: Lambda rejects BuildKit attestation manifests

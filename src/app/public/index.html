@@ -55,7 +55,8 @@
   <div class="view" id="v-home">
     <button class="primary big" id="btn-photo">&#128247; Photograph a sign</button>
     <input type="file" id="file" accept="image/*" capture="environment" hidden>
-    <p class="tag">Aim so the handwritten code fills a good chunk of the frame.</p>
+    <p class="tag">Get close — fill the frame with the sign, and keep other text
+    (house numbers, bin labels) out of the shot.</p>
   </div>
 
   <div class="view" id="v-busy">
@@ -150,7 +151,10 @@ async function api(path, body) {
 // Tier-2 crops from this too — measured identical to original-res crops
 // (38/39 both, out/runs/…-gcvcrop-e2400src), for ~1/8 the upload bytes.
 const UPLOAD_MAX_EDGE = 2400;
+// Returns {blob, decodeMs, encodeMs} — the split matters: field prep times are
+// bimodal (0.3-1s vs 10-13s) and we need to see which half stalls.
 async function toJpeg(file) {
+  let t = Date.now();
   let img;
   try { img = await createImageBitmap(file); }
   catch {
@@ -161,6 +165,8 @@ async function toJpeg(file) {
       i.src = URL.createObjectURL(file);
     });
   }
+  const decodeMs = Date.now() - t;
+  t = Date.now();
   const scale = Math.min(1, UPLOAD_MAX_EDGE / Math.max(img.width, img.height));
   const c = document.createElement("canvas");
   c.width = Math.round(img.width * scale);
@@ -168,7 +174,7 @@ async function toJpeg(file) {
   c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
   const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.85));
   if (!blob) throw new Error("could not encode the photo");
-  return blob;
+  return { blob, decodeMs, encodeMs: Date.now() - t };
 }
 
 function presentResult(tier, code, conf) {
@@ -208,7 +214,15 @@ async function onPhoto(file) {
     show("v-busy", "Preparing photo…");
     let t = Date.now();
     const jpeg = await toJpeg(file);
-    state.timings.prepMs = Date.now() - t;
+    Object.assign(state.timings, {
+      prepMs: Date.now() - t,
+      decodeMs: jpeg.decodeMs,
+      encodeMs: jpeg.encodeMs,
+      fileType: file.type || "?",
+      fileBytes: file.size,
+      // near-zero age = capture finalized moments before we got it (HDR theory)
+      fileAgeMs: file.lastModified ? Date.now() - file.lastModified : null,
+    });
 
     const s = (await pendingSession) ?? (await api("/api/session"));
     pendingSession = null;
@@ -217,11 +231,11 @@ async function onPhoto(file) {
     show("v-busy", "Uploading…");
     t = Date.now();
     const up = await fetch(s.uploadUrl, {
-      method: "PUT", headers: { "content-type": "image/jpeg" }, body: jpeg,
+      method: "PUT", headers: { "content-type": "image/jpeg" }, body: jpeg.blob,
     });
     if (!up.ok) throw new Error("upload failed (HTTP " + up.status + ")");
     state.timings.uploadMs = Date.now() - t;
-    state.timings.uploadBytes = jpeg.size;
+    state.timings.uploadBytes = jpeg.blob.size;
 
     show("v-busy", "Reading the sign…");
     t = Date.now();

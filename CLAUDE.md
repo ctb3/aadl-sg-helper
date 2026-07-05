@@ -85,6 +85,15 @@ Accounts (us-east-2, Terraform in infra/terraform/, OIDC from GitHub — no
 long-lived keys): TEST 825555019530, PROD 766253192238; old account
 619467956318 was torn down 2026-07-05. Secrets (APP_PIN, GCV key) live in
 each account's SSM under /aadl-sg/.
+Custom domains (v0.4.0): prod https://aadlcode.ctb3.net, test
+https://aadlcode-test.ctb3.net — CloudFront in front of the Function URL
+(which stays public as a debugging bypass; PIN gates both). Per-env hosted
+zone in bootstrap, delegated from ctb3.net (ctb3-general account, manual
+one-time NS record — redo it if the zone is ever recreated). CloudFront must
+NOT forward the viewer Host header (Function URLs route by Host — the
+AllViewerExceptHostHeader managed policy handles it); origin read timeout is
+60s (max without a quota bump). No OAC: SigV4 origins force browsers to send
+x-amz-content-sha256 on POSTs.
 Gotchas burned in already: Lambda rejects BuildKit attestation manifests
 (build with --provenance=false --sbom=false); the Function URL needs a
 public lambda:InvokeFunction grant besides InvokeFunctionUrl (PIN still holds

@@ -198,6 +198,68 @@ resource "aws_iam_role_policy" "ci" {
         Action   = ["ssm:GetParameter"]
         Resource = "arn:aws:ssm:${var.region}:${local.account_id}:parameter/aadl-sg/*"
       },
+      {
+        # The custom-domain cert. RequestCertificate has no resource type
+        # (the ARN is generated at request time), so it's pinned by region
+        # instead — CloudFront certs must be us-east-1.
+        Sid      = "AcmRequest"
+        Effect   = "Allow"
+        Action   = ["acm:RequestCertificate"]
+        Resource = "*"
+        Condition = {
+          StringEquals = { "aws:RequestedRegion" = "us-east-1" }
+        }
+      },
+      {
+        Sid    = "AcmManage"
+        Effect = "Allow"
+        Action = [
+          "acm:DescribeCertificate",
+          "acm:DeleteCertificate",
+          "acm:ListTagsForCertificate",
+          "acm:AddTagsToCertificate",
+          "acm:RemoveTagsFromCertificate",
+        ]
+        Resource = "arn:aws:acm:us-east-1:${local.account_id}:certificate/*"
+      },
+      {
+        # Cert-validation + app alias records, scoped to the app's own
+        # delegated zone (dns.tf) — CI never touches the parent ctb3.net zone.
+        Sid    = "AppZoneRecords"
+        Effect = "Allow"
+        Action = [
+          "route53:GetHostedZone",
+          "route53:ListResourceRecordSets",
+          "route53:ChangeResourceRecordSets",
+        ]
+        Resource = "arn:aws:route53:::hostedzone/${aws_route53_zone.app.zone_id}"
+      },
+      {
+        # GetChange is terraform waiting for record changes to go INSYNC;
+        # change IDs are ephemeral and can't be scoped tighter.
+        Sid      = "Route53ChangePoll"
+        Effect   = "Allow"
+        Action   = ["route53:GetChange"]
+        Resource = "arn:aws:route53:::change/*"
+      },
+      {
+        # Distribution IDs are generated, so Create can't be name-scoped;
+        # this account's distributions contain only this app.
+        Sid    = "CloudFront"
+        Effect = "Allow"
+        Action = [
+          "cloudfront:CreateDistribution",
+          "cloudfront:CreateDistributionWithTags",
+          "cloudfront:GetDistribution",
+          "cloudfront:GetDistributionConfig",
+          "cloudfront:UpdateDistribution",
+          "cloudfront:DeleteDistribution",
+          "cloudfront:TagResource",
+          "cloudfront:UntagResource",
+          "cloudfront:ListTagsForResource",
+        ]
+        Resource = "arn:aws:cloudfront::${local.account_id}:distribution/*"
+      },
     ]
   })
 }

@@ -3,6 +3,11 @@ variable "region" {
   default = "us-east-2"
 }
 
+variable "app_domain" {
+  description = "This env's app domain (a subdomain of ctb3.net); becomes the hosted zone name."
+  type        = string
+}
+
 variable "github_repo" {
   description = "GitHub repo (owner/name) allowed to assume the CI role via OIDC."
   type        = string

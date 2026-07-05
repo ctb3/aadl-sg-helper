@@ -23,6 +23,13 @@ provider "aws" {
   region = var.region
 }
 
+# CloudFront requires its viewer certificate to live in us-east-1,
+# regardless of where the rest of the stack runs.
+provider "aws" {
+  alias  = "use1"
+  region = "us-east-1"
+}
+
 data "aws_caller_identity" "current" {}
 
 locals {

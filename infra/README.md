@@ -64,28 +64,14 @@ Stacks (`infra/terraform/`):
 First test deploy = next push to main. Verify with the paid path once:
 `APP_PIN=<test-pin> npx tsx infra/apitest.ts --full https://<test-url>`.
 
-## Cutover from the old account (619467956318)
-
-Old stack keeps serving until the new prod URL is verified. **Nothing in the
-old account gets deleted until Carl explicitly approves.** Then:
-
-1. Sync session history into new prod (two steps via local disk — avoids
-   cross-account bucket policies):
-
-   ```bash
-   aws s3 sync s3://aadl-sg-sessions-619467956318/sessions/ ./sessions-archive/ \
-     --profile service-aadl-sg-helper
-   aws s3 sync ./sessions-archive/ s3://aadl-sg-sessions-766253192238/sessions/ \
-     --profile aadl-sg-prod-admin
-   ```
-
-2. Move the phone bookmark to the new prod Function URL.
-3. Tear down old resources (Lambda, role, ECR, buckets, deploy user
-   `service-aadl-sg-helper`); retire the account when comfortable.
+> Migration note: the old account (619467956318) was fully torn down
+> 2026-07-05 after its session data was synced into the prod bucket.
 
 ## Local escape hatch (CI down / debugging)
 
 Same commands CI runs, with an admin SSO profile: docker build+push an
 immutable tag, then `terraform -chdir=infra/terraform/app init -backend-config
 bucket/region` + `apply -var-file=<env>.tfvars -var image_uri=...`.
-`npx tsx infra/apitest.ts [--full] <url>` smoke-tests any deployment.
+`npx tsx infra/apitest.ts [--full] <url>` smoke-tests any deployment
+(no trailing slash on the URL; from WSL pass the PIN as
+`WSLENV=APP_PIN/w APP_PIN=… npx tsx …` — apitest runs on Windows node).

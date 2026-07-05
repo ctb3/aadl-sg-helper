@@ -51,7 +51,13 @@ Scoring normalizes case/whitespace (submission is case/space-insensitive).
 - `npm run preflight` / `npm run typecheck`.
 - `npm run app` — field-test app server at :8080 (same code Lambda runs);
   `npx tsx infra/apitest.ts [--full] [base-url]` smoke-tests it (`--full` = paid
-  path). `bash infra/deploy.sh` — idempotent deploy (ECR image → Lambda + URL).
+  path; base URL must have NO trailing slash; pass the PIN with
+  `WSLENV=APP_PIN/w APP_PIN=…` — a plain env prefix dies at the WSL→Windows
+  boundary and dotenv silently substitutes .env's pin).
+- Deploys are CI-only (`.github/workflows/`, runbook in `infra/README.md`):
+  push to main → TEST account auto-deploy; publish GitHub Release vX.Y.Z →
+  PROD (tag must equal package.json version — bump it in the PR). Rollback =
+  re-dispatch deploy-prod from the old tag (immutable ECR tags skip rebuild).
 - `npx tsx infra/aadltest.ts [CODE]` — live integration test of the aadl.org
   client (login/connect/gibberish-submit; needs AADL_USERNAME/AADL_PASSWORD
   test creds in .env). Pass a CODE to exercise the success path — it REALLY
@@ -69,17 +75,23 @@ independently attributable). Client uploads full-res JPEG straight to S3 via pre
 (dodges the 6MB Function URL cap, keeps tier-2 crops high-res); every session
 logs photo/crop/results/verdicts under s3://aadl-sg-sessions-…/sessions/ for
 future labeling. Access gate = APP_PIN (.env) checked server-side.
-Every deploy bumps package.json's version (deploy.sh, commit it with the
-changeset): shown on the page, prefixes sessions (`sessions/v<version>/`),
-recorded in extract.json; sessions-report.ts defaults to the current
-version's prefix. GET / is `Cache-Control: no-store` — a phone-cached stale
-client once silently dropped a batch's instrumentation.
-Deploy account 619467956318 (us-east-2, profile service-aadl-sg-helper; its
-inline `aadl-sg-app-deploy` IAM policy = infra/deploy-user-policy.json).
+Versioning is tag-driven: prod ships package.json's version verbatim (CI
+asserts tag == version); test builds stamp `X.Y.Z-test.<run>.<attempt>.g<sha>`
+via a Dockerfile ARG. The version shows on the page, prefixes sessions
+(`sessions/v<version>/`), lands in extract.json; sessions-report.ts defaults
+to the current version's prefix. GET / is `Cache-Control: no-store` — a
+phone-cached stale client once silently dropped a batch's instrumentation.
+Accounts (us-east-2, Terraform in infra/terraform/, OIDC from GitHub — no
+long-lived keys): TEST 825555019530, PROD 766253192238; old account
+619467956318 was torn down 2026-07-05. Secrets (APP_PIN, GCV key) live in
+each account's SSM under /aadl-sg/.
 Gotchas burned in already: Lambda rejects BuildKit attestation manifests
-(deploy.sh builds with --provenance=false); the Function URL needed a
+(build with --provenance=false --sbom=false); the Function URL needs a
 public lambda:InvokeFunction grant besides InvokeFunctionUrl (PIN still holds
-either way); Android Chrome throttles main-thread canvas work after returning
+either way); the Function URL + its two permissions must apply serially
+(concurrent AddPermission → 409); GitHub jobs with `environment:` present
+OIDC sub `repo:…:environment:<name>` not `ref:…` (CI-role trust accepts
+both); Android Chrome throttles main-thread canvas work after returning
 from the camera app (constant ~13.4s toBlob stall) — client encodes in a
 Web Worker via OffscreenCanvas (main-thread fallback kept).
 
@@ -125,7 +137,11 @@ manual prefilled** = 97.4% end-to-end, <$0.003/img avg, 87% instant (0.4s).
 - Orphaned listeners (e.g. labeler on :5178): find via `netstat.exe -ano |
   grep :5178`, verify+kill via `powershell.exe -Command "Stop-Process -Id <pid>
   -Force"`. Stopping the WSL background task does not kill the Windows process.
-- AWS: Windows `~/.aws`, profile `service-aadl-sg-helper`, region `us-east-2`
-  (set in `.env`). Bedrock models need per-model Marketplace subscription;
-  `claude-sonnet-5` is gated off for this account (Sonnet 4.6 in use).
+- AWS: one shared `~/.aws` (WSL's is a symlink to Windows'), region
+  `us-east-2`. IAM Identity Center SSO profiles: `aadl-sg-test-admin` /
+  `aadl-sg-prod-admin` (`.env` sets AWS_PROFILE=aadl-sg-test-admin — local
+  work targets the TEST account). When the SSO session expires, run
+  `aws sso login` from **Windows/PowerShell** for the harness (npx = Windows
+  node reads the Windows-side token cache). Bedrock models need per-model
+  per-account Marketplace subscription (Sonnet 4.6 enabled in both accounts).
 - Temp scripts must live inside the project — cross-drive tsx imports fail.

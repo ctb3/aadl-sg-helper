@@ -27,8 +27,9 @@ import { runTier1, runTier2 } from "./pipeline";
 const s3 = new S3Client({ region: config.awsRegion });
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "public");
 
-// Deploys bump package.json (infra/deploy.sh); the version tags the page (so a
-// stale cached client is visible at a glance), the S3 prefix, and extract.json.
+// CI stamps package.json at image build (test) or ships it as tagged (prod);
+// the version tags the page (so a stale cached client is visible at a
+// glance), the S3 prefix, and extract.json.
 const APP_VERSION: string = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../package.json"), "utf8"),
 ).version;

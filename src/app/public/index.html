@@ -717,8 +717,14 @@ async function submitToAadl(code) {
     const head = document.createElement("div");
     const badge = document.createElement("span");
     badge.className = cls;
+    // "each" only when 2+ players in the account actually scored — a mixed
+    // account (one redeemed, one already had it) shows plain "100 pts" and
+    // the per-player messages below tell the rest.
+    const scored = (r.messages || []).filter((m) => m.outcome === "success").length;
     badge.innerHTML = label +
-      (r.outcome === "success" && r.points != null ? " &middot; " + r.points + " pts each" : "");
+      (r.outcome === "success" && r.points != null
+        ? " &middot; " + r.points + (scored > 1 ? " pts each" : " pts")
+        : "");
     if (res.results.length > 1) head.append(r.label + ": ");
     head.append(badge);
     div.append(head);

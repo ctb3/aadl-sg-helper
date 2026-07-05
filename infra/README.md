@@ -36,17 +36,26 @@ Stacks (`infra/terraform/`):
    The same GCP key in both accounts is fine (mint a second GCP SA key for
    test if you want blast separation on the Google side too).
 
-4. **Bootstrap apply** (per account; first apply on local state):
+4. **Bootstrap apply** (per account). The backend is partial — every
+   terraform command needs `AWS_PROFILE` set (the S3 backend reads the
+   ambient credential chain, not the provider block), and every `init`
+   names the account's state bucket explicitly. Create the bucket first,
+   import it, then apply:
 
    ```bash
    cd infra/terraform/bootstrap
-   AWS_PROFILE=aadl-sg-test-admin terraform init
-   AWS_PROFILE=aadl-sg-test-admin terraform apply -var-file=test.tfvars   # prod.tfvars for prod
+   export AWS_PROFILE=aadl-sg-test-admin   # or aadl-sg-prod-admin
+   ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+   aws s3api create-bucket --bucket "aadl-sg-tf-state-$ACCOUNT" --region us-east-2 \
+     --create-bucket-configuration LocationConstraint=us-east-2
+   terraform init -reconfigure \
+     -backend-config="bucket=aadl-sg-tf-state-$ACCOUNT" -backend-config="region=us-east-2"
+   terraform import -var-file=test.tfvars aws_s3_bucket.tf_state "aadl-sg-tf-state-$ACCOUNT"
+   terraform apply -var-file=test.tfvars   # prod.tfvars for prod
    ```
 
-   Then uncomment the `backend "s3"` block in `versions.tf` (fill in the
-   account id) and `terraform init -migrate-state` to move state into the
-   bucket just created. Note outputs `ci_role_arn` / `state_bucket`.
+   (`-reconfigure` matters when switching this working dir between
+   accounts.) Note outputs `ci_role_arn` / `state_bucket`.
 
 5. **GitHub:** repo → Settings → Environments → create `test` and `prod`.
    In each, add variables `AWS_ROLE_ARN` and `TF_STATE_BUCKET` from that

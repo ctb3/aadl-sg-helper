@@ -2,9 +2,15 @@
 # (never by CI). Creates the things CI itself depends on: TF state bucket,
 # GitHub OIDC provider, the scoped CI role, and the shared ECR repo.
 #
-# Chicken-and-egg: the state bucket is created by this very stack, so the FIRST
-# apply runs on local state. Then uncomment the backend block below (fill in
-# the account id) and run `terraform init -migrate-state`.
+# The backend is partial on purpose: the bucket is per-account, so every init
+# names it explicitly (forgetting the flag fails loudly instead of writing to
+# the wrong account):
+#   terraform init -backend-config="bucket=aadl-sg-tf-state-<ACCOUNT_ID>" \
+#                  -backend-config="region=us-east-2"
+# Add -reconfigure when switching this working dir between accounts.
+# First-ever apply in a fresh account: create the bucket with the CLI, init
+# against it, `terraform import aws_s3_bucket.tf_state <bucket>`, then apply
+# (see infra/README.md).
 
 terraform {
   required_version = ">= 1.10"
@@ -16,12 +22,10 @@ terraform {
     }
   }
 
-  # backend "s3" {
-  #   bucket       = "aadl-sg-tf-state-<ACCOUNT_ID>"
-  #   key          = "aadl-sg/bootstrap.tfstate"
-  #   region       = "us-east-2"
-  #   use_lockfile = true
-  # }
+  backend "s3" {
+    key          = "aadl-sg/bootstrap.tfstate"
+    use_lockfile = true
+  }
 }
 
 provider "aws" {

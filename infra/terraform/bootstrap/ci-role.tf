@@ -57,7 +57,7 @@ data "aws_iam_policy_document" "ci_trust" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = [for ref in var.github_ref_patterns : "repo:${var.github_repo}:ref:${ref}"]
+      values   = [for sub in var.github_sub_patterns : "repo:${var.github_repo}:${sub}"]
     }
   }
 }

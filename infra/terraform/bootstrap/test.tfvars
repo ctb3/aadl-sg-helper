@@ -1,2 +1,7 @@
 # Test account (825555019530): main-branch pushes deploy here.
-github_ref_patterns = ["refs/heads/main"]
+# environment:test = the sub GitHub actually sends for deploy-test.yml's job
+# (it declares `environment: test`); the ref form covers non-environment jobs.
+github_sub_patterns = [
+  "environment:test",
+  "ref:refs/heads/main",
+]

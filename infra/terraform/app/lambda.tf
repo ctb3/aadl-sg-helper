@@ -54,12 +54,18 @@ resource "aws_lambda_function_url" "app" {
 # The PIN check inside the server is the real gate; the URL is public.
 # InvokeFunctionUrl alone still 403'd in the old account — the URL front-end
 # also wanted a plain public lambda:InvokeFunction grant. Keeping both.
+#
+# The depends_on chain serializes these: URL creation and the two AddPermission
+# calls all mutate the function, and running them concurrently threw
+# ResourceConflictException (409) on prod's first apply.
 resource "aws_lambda_permission" "public_url" {
   statement_id           = "public-url"
   action                 = "lambda:InvokeFunctionUrl"
   function_name          = aws_lambda_function.app.function_name
   principal              = "*"
   function_url_auth_type = "NONE"
+
+  depends_on = [aws_lambda_function_url.app]
 }
 
 resource "aws_lambda_permission" "public_invoke" {
@@ -67,4 +73,6 @@ resource "aws_lambda_permission" "public_invoke" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.app.function_name
   principal     = "*"
+
+  depends_on = [aws_lambda_permission.public_url]
 }

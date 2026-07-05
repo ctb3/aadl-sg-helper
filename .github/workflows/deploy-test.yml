@@ -74,7 +74,10 @@ jobs:
 
       - name: Smoke test (free path)
         run: |
+          # apitest builds "$URL/api/..." — the trailing slash Function URLs
+          # come with turns every route into a 404. Strip it.
           URL=$(terraform -chdir=infra/terraform/app output -raw function_url)
+          URL="${URL%/}"
           PIN=$(aws ssm get-parameter --name /aadl-sg/app-pin --with-decryption \
             --query Parameter.Value --output text)
           echo "::add-mask::$PIN"

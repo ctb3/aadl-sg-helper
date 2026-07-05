@@ -462,6 +462,52 @@ async function toJpeg(file) {
   return { ...out, fileReadMs, encodeMs: out.drawMs + out.blobMs };
 }
 
+// --- inline transport (store-images OFF) ---
+// When the flag is off the photo never touches S3: it rides inline in the
+// extract call and the crop rides back in escalate. Base64 a blob in chunks
+// (btoa on a whole 2400px frame overflows the arg on some engines).
+async function blobToB64(blob) {
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let s = "";
+  for (let i = 0; i < buf.length; i += 0x8000) {
+    s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  }
+  return btoa(s);
+}
+
+// The Function URL request cap is ~6MB (the very reason the ON path uses a
+// presigned PUT). A ≤2400px JPEG is almost always well under it; this only
+// bites on an unusually heavy frame, shrinking it just enough to fit. GCV +
+// the single-line crop are unaffected at these sizes.
+async function reencodeToFit(blob) {
+  const LIMIT = 5_500_000; // base64 chars, safely under the 6MB request cap
+  let b64 = await blobToB64(blob);
+  let maxEdge = UPLOAD_MAX_EDGE, quality = JPEG_QUALITY;
+  for (let i = 0; b64.length > LIMIT && i < 4; i++) {
+    maxEdge = Math.max(1400, Math.round(maxEdge * 0.85));
+    quality = Math.max(0.5, quality - 0.1);
+    const bmp = await createImageBitmap(blob);
+    const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * scale);
+    c.height = Math.round(bmp.height * scale);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    if (bmp.close) bmp.close();
+    blob = await new Promise((r) => c.toBlob(r, "image/jpeg", quality));
+    c.width = c.height = 0;
+    b64 = await blobToB64(blob);
+  }
+  return b64;
+}
+
+// Escalate reads the crop from S3 when ON; when OFF the client hands back the
+// crop it's holding (cropDataUrl) so nothing had to be stored to bridge here.
+function escalateBody() {
+  return state.storeImages
+    ? { sessionId: state.sessionId }
+    : { sessionId: state.sessionId, crop: state.cropDataUrl };
+}
+
 // Only ever shows the tier-1 read, and only on the no-account path — with an
 // account connected everything auto-submits, and Claude's read goes straight
 // to the manual screen as its prefill.
@@ -523,19 +569,30 @@ async function onPhoto(file) {
     const s = (await pendingSession) ?? (await api("/api/session"));
     pendingSession = null;
     state.sessionId = s.sessionId;
+    state.storeImages = s.storeImages !== false; // default to keeping if unset
 
-    show("v-busy", "Uploading…");
-    t = Date.now();
-    const up = await fetch(s.uploadUrl, {
-      method: "PUT", headers: { "content-type": "image/jpeg" }, body: jpeg.blob,
-    });
-    if (!up.ok) throw new Error("upload failed (HTTP " + up.status + ")");
-    state.timings.uploadMs = Date.now() - t;
+    let extractBody;
+    if (state.storeImages) {
+      show("v-busy", "Uploading…");
+      t = Date.now();
+      const up = await fetch(s.uploadUrl, {
+        method: "PUT", headers: { "content-type": "image/jpeg" }, body: jpeg.blob,
+      });
+      if (!up.ok) throw new Error("upload failed (HTTP " + up.status + ")");
+      state.timings.uploadMs = Date.now() - t;
+      extractBody = { sessionId: state.sessionId };
+    } else {
+      // Off: send the photo inline; nothing is ever written to S3.
+      show("v-busy", "Preparing…");
+      t = Date.now();
+      extractBody = { sessionId: state.sessionId, photo: await reencodeToFit(jpeg.blob) };
+      state.timings.uploadMs = Date.now() - t; // inline encode ≈ the "upload" step
+    }
     state.timings.uploadBytes = jpeg.blob.size;
 
     show("v-busy", "Reading the sign…");
     t = Date.now();
-    const res = await api("/api/extract", { sessionId: state.sessionId });
+    const res = await api("/api/extract", extractBody);
     state.timings.extractMs = Date.now() - t;
     state.tier1 = res.tier1;
     state.tier2 = res.tier2;
@@ -559,7 +616,7 @@ async function onPhoto(file) {
     if (!state.tier2) {
       show("v-busy", "Asking Claude for a closer look…");
       t = Date.now();
-      const r = await api("/api/escalate", { sessionId: state.sessionId });
+      const r = await api("/api/escalate", escalateBody());
       state.timings.escalateMs = Date.now() - t;
       state.tier2 = r.tier2;
     }
@@ -584,7 +641,7 @@ async function reject() {
   try {
     show("v-busy", "Asking Claude for a closer look…");
     const t = Date.now();
-    const r = await api("/api/escalate", { sessionId: state.sessionId });
+    const r = await api("/api/escalate", escalateBody());
     state.timings.escalateMs = Date.now() - t;
     state.tier2 = r.tier2;
     showManual();
@@ -682,7 +739,7 @@ async function submitToAadl(code) {
     state.verdicts.push({ tier: state.presented.tier, code, action: "aadl_rejected" });
     show("v-busy", "AADL didn't recognize it, asking Claude…");
     const t2 = Date.now();
-    const r = await api("/api/escalate", { sessionId: state.sessionId });
+    const r = await api("/api/escalate", escalateBody());
     state.timings.escalateMs = Date.now() - t2;
     state.tier2 = r.tier2;
     const newCode = norm(r.tier2.code);

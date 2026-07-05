@@ -8,13 +8,15 @@ import { normalize } from "../score";
  * accuracy + stage timings. Ground truth = the user's approved/manual final
  * code (the verdict IS the label — that's the point of the app).
  *
- *   npx tsx src/app/sessions-report.ts [prefix]
+ *   npx tsx src/app/sessions-report.ts [prefix]     detailed, one version
+ *   npx tsx src/app/sessions-report.ts --summary    cross-version rollup
+ *
  * Default prefix = the current app version's folder (sessions/v<package.json
- * version>/); pass an explicit prefix for older batches.
+ * version>/); pass an explicit prefix for older batches. `--summary` instead
+ * groups every version into an accuracy + per-step-speed (avg·p99) table.
  */
 
 const pkgVersion: string = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
-const prefix = process.argv[2] ?? `sessions/v${pkgVersion}/`;
 const s3 = new S3Client({ region: config.awsRegion });
 const bucket = config.sessionsBucket;
 
@@ -28,6 +30,7 @@ async function getJson(key: string): Promise<any | null> {
 }
 
 interface Row {
+  version: string;
   id: string;
   at: string;
   photo: { width?: number; height?: number; bytes?: number };
@@ -59,9 +62,29 @@ function stats(xs: number[]): string {
   return `med ${med}ms · max ${s[s.length - 1]}ms`;
 }
 
-async function main(): Promise<void> {
-  if (!bucket) throw new Error("SESSIONS_BUCKET not set");
+// --- summary helpers ---
+function mean(xs: number[]): number | null {
+  return xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null;
+}
+function pctl(xs: number[], p: number): number | null {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.max(0, Math.min(s.length - 1, Math.ceil(p * s.length) - 1))];
+}
+function fmt(ms: number | null): string {
+  return ms === null ? "-" : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+/** "avg·p99" over a series of step timings. */
+function ap(xs: number[]): string {
+  return xs.length ? `${fmt(mean(xs))}·${fmt(pctl(xs, 0.99))}` : "n/a";
+}
+/** compact "pct·hits/total" (percentages hide differing denominators). */
+function rate(a: number, b: number): string {
+  return b ? `${Math.round((a / b) * 100)}%·${a}/${b}` : "n/a";
+}
 
+/** Session ids (sorted) directly under a `sessions/v<ver>/` prefix. */
+async function collectIds(prefix: string): Promise<string[]> {
   const ids = new Set<string>();
   let token: string | undefined;
   do {
@@ -74,37 +97,56 @@ async function main(): Promise<void> {
     }
     token = page.NextContinuationToken;
   } while (token);
+  return [...ids].sort();
+}
 
+const versionOf = (prefix: string): string => prefix.match(/v([^/]+)\/$/)?.[1] ?? prefix;
+
+/** Load one session's JSON trail into a Row (null when there's nothing to analyze). */
+async function buildRow(prefix: string, id: string): Promise<Row | null> {
+  const [extract, tier2, verdict, submit] = await Promise.all([
+    getJson(`${prefix}${id}/extract.json`),
+    getJson(`${prefix}${id}/tier2.json`),
+    getJson(`${prefix}${id}/verdict.json`),
+    getJson(`${prefix}${id}/submit.json`),
+  ]);
+  if (!extract) return null;
+  const t2 = tier2?.tier2 ?? extract.tier2 ?? null;
+  return {
+    version: versionOf(prefix),
+    id,
+    at: extract.at ?? new Date(Number(id.split("-")[0])).toISOString(),
+    photo: extract.photo ?? {},
+    t1code: normalize(extract.tier1?.code ?? ""),
+    minConf: extract.tier1?.minConf ?? null,
+    gate: !!extract.tier1?.gatePassed,
+    usedLine: !!extract.tier1?.usedLine,
+    t1LatMs: extract.tier1?.latencyMs ?? null,
+    t2code: t2 ? normalize(t2.code ?? "") : null,
+    t2How: t2 ? (extract.tier2 ? "auto" : "escalated") : null,
+    t2LatMs: t2?.latencyMs ?? null,
+    truth: verdict?.finalCode ? normalize(verdict.finalCode) : null,
+    source: verdict?.source ?? null,
+    verdicts: verdict?.verdicts ?? [],
+    timings: verdict?.timings ?? {},
+    clientMs: typeof verdict?.clientMs === "number" ? verdict.clientMs : null,
+    submits: submit?.attempts ?? [],
+  };
+}
+
+async function loadRows(prefix: string): Promise<Row[]> {
   const rows: Row[] = [];
-  for (const id of [...ids].sort()) {
-    const [extract, tier2, verdict, submit] = await Promise.all([
-      getJson(`${prefix}${id}/extract.json`),
-      getJson(`${prefix}${id}/tier2.json`),
-      getJson(`${prefix}${id}/verdict.json`),
-      getJson(`${prefix}${id}/submit.json`),
-    ]);
-    if (!extract) continue; // nothing to analyze
-    const t2 = tier2?.tier2 ?? extract.tier2 ?? null;
-    rows.push({
-      id,
-      at: extract.at ?? new Date(Number(id.split("-")[0])).toISOString(),
-      photo: extract.photo ?? {},
-      t1code: normalize(extract.tier1?.code ?? ""),
-      minConf: extract.tier1?.minConf ?? null,
-      gate: !!extract.tier1?.gatePassed,
-      usedLine: !!extract.tier1?.usedLine,
-      t1LatMs: extract.tier1?.latencyMs ?? null,
-      t2code: t2 ? normalize(t2.code ?? "") : null,
-      t2How: t2 ? (extract.tier2 ? "auto" : "escalated") : null,
-      t2LatMs: t2?.latencyMs ?? null,
-      truth: verdict?.finalCode ? normalize(verdict.finalCode) : null,
-      source: verdict?.source ?? null,
-      verdicts: verdict?.verdicts ?? [],
-      timings: verdict?.timings ?? {},
-      clientMs: typeof verdict?.clientMs === "number" ? verdict.clientMs : null,
-      submits: submit?.attempts ?? [],
-    });
+  for (const id of await collectIds(prefix)) {
+    const r = await buildRow(prefix, id);
+    if (r) rows.push(r);
   }
+  return rows;
+}
+
+async function main(): Promise<void> {
+  if (!bucket) throw new Error("SESSIONS_BUCKET not set");
+  const prefix = process.argv[2] ?? `sessions/v${pkgVersion}/`;
+  const rows = await loadRows(prefix);
 
   console.log(`\n${rows.length} session(s) under s3://${bucket}/${prefix}\n`);
   console.log(
@@ -204,7 +246,79 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+/** Version prefixes (`sessions/v.../`) under the bucket. */
+async function listVersionPrefixes(): Promise<string[]> {
+  const prefixes: string[] = [];
+  let token: string | undefined;
+  do {
+    const page = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: "sessions/",
+        Delimiter: "/",
+        ContinuationToken: token,
+      }),
+    );
+    for (const cp of page.CommonPrefixes ?? []) if (cp.Prefix) prefixes.push(cp.Prefix);
+    token = page.NextContinuationToken;
+  } while (token);
+  return prefixes;
+}
+
+// Cross-version rollup: one accuracy row + one speed row per version, so a
+// glance shows whether a release moved step1/step2 correctness or timings.
+async function summary(): Promise<void> {
+  if (!bucket) throw new Error("SESSIONS_BUCKET not set");
+  const rows: Row[] = [];
+  for (const p of await listVersionPrefixes()) rows.push(...(await loadRows(p)));
+
+  const byVer = new Map<string, Row[]>();
+  for (const r of rows) (byVer.get(r.version) ?? byVer.set(r.version, []).get(r.version)!).push(r);
+  const versions = [...byVer.keys()].sort().reverse();
+
+  console.log(`\n${rows.length} session(s) across ${versions.length} version(s) under s3://${bucket}/sessions/`);
+
+  console.log(`\n== accuracy (pct·hits/total)`);
+  console.log(
+    "version".padEnd(26) + "seen".padEnd(6) + "done".padEnd(6) + "aband".padEnd(7) +
+    "tier1✓".padEnd(15) + "tier1-gated✓".padEnd(15) + "tier2✓".padEnd(15) + "gate%",
+  );
+  for (const v of versions) {
+    const rs = byVer.get(v)!;
+    const done = rs.filter((r) => r.truth !== null);
+    const gd = done.filter((r) => r.gate);
+    const t2d = done.filter((r) => r.t2code !== null);
+    console.log(
+      v.slice(0, 25).padEnd(26) +
+      String(rs.length).padEnd(6) + String(done.length).padEnd(6) +
+      String(rs.length - done.length).padEnd(7) +
+      rate(done.filter((r) => r.t1code === r.truth).length, done.length).padEnd(15) +
+      rate(gd.filter((r) => r.t1code === r.truth).length, gd.length).padEnd(15) +
+      rate(t2d.filter((r) => r.t2code === r.truth).length, t2d.length).padEnd(15) +
+      rate(rs.filter((r) => r.gate).length, rs.length),
+    );
+  }
+
+  console.log(`\n== speed per step, completed sessions (avg·p99)`);
+  console.log(
+    "version".padEnd(26) + "prep".padEnd(15) + "upload".padEnd(15) +
+    "extract".padEnd(15) + "escalate".padEnd(15) + "shutter→verdict",
+  );
+  for (const v of versions) {
+    const done = byVer.get(v)!.filter((r) => r.truth !== null);
+    const col = (k: string): string =>
+      ap(done.map((r) => r.timings[k]).filter((x): x is number => typeof x === "number"));
+    console.log(
+      v.slice(0, 25).padEnd(26) +
+      col("prepMs").padEnd(15) + col("uploadMs").padEnd(15) +
+      col("extractMs").padEnd(15) + col("escalateMs").padEnd(15) +
+      ap(done.map((r) => r.clientMs).filter((x): x is number => x !== null)),
+    );
+  }
+}
+
+const run = process.argv.includes("--summary") ? summary : main;
+run().catch((err) => {
   console.error(err);
   process.exit(1);
 });

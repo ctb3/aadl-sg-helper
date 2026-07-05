@@ -29,6 +29,14 @@ resource "aws_iam_policy" "app_boundary" {
         Resource = "arn:aws:s3:::aadl-sg-sessions-*/sessions/*"
       },
       {
+        # Runtime feature-flag reads (src/app/flags.ts). Without this the
+        # boundary would cap the read and the flag would silently fail-open.
+        Sid      = "AppConfigRead"
+        Effect   = "Allow"
+        Action   = ["appconfig:StartConfigurationSession", "appconfig:GetLatestConfiguration"]
+        Resource = "arn:aws:appconfig:${var.region}:${local.account_id}:application/*"
+      },
+      {
         Sid      = "Logs"
         Effect   = "Allow"
         Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
@@ -197,6 +205,38 @@ resource "aws_iam_role_policy" "ci" {
         Effect   = "Allow"
         Action   = ["ssm:GetParameter"]
         Resource = "arn:aws:ssm:${var.region}:${local.account_id}:parameter/aadl-sg/*"
+      },
+      {
+        # Manage the AppConfig feature-flag stack (appconfig.tf). IDs are
+        # generated so Create can't be name-scoped; capped to this account.
+        # The seed deploy + out-of-band flips both use StartDeployment.
+        Sid    = "AppConfigManage"
+        Effect = "Allow"
+        Action = [
+          "appconfig:CreateApplication",
+          "appconfig:GetApplication",
+          "appconfig:UpdateApplication",
+          "appconfig:DeleteApplication",
+          "appconfig:CreateEnvironment",
+          "appconfig:GetEnvironment",
+          "appconfig:UpdateEnvironment",
+          "appconfig:DeleteEnvironment",
+          "appconfig:CreateConfigurationProfile",
+          "appconfig:GetConfigurationProfile",
+          "appconfig:UpdateConfigurationProfile",
+          "appconfig:DeleteConfigurationProfile",
+          "appconfig:CreateHostedConfigurationVersion",
+          "appconfig:GetHostedConfigurationVersion",
+          "appconfig:DeleteHostedConfigurationVersion",
+          "appconfig:ListHostedConfigurationVersions",
+          "appconfig:StartDeployment",
+          "appconfig:GetDeployment",
+          "appconfig:StopDeployment",
+          "appconfig:TagResource",
+          "appconfig:UntagResource",
+          "appconfig:ListTagsForResource",
+        ]
+        Resource = "arn:aws:appconfig:${var.region}:${local.account_id}:*"
       },
       {
         # The custom-domain cert. RequestCertificate has no resource type

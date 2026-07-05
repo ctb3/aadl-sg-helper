@@ -8,6 +8,11 @@ variable "image_uri" {
   type        = string
 }
 
+variable "env_name" {
+  description = "Deployment env label (test|prod) — names the AppConfig environment."
+  type        = string
+}
+
 variable "app_domain" {
   description = "This env's custom domain (CloudFront alias in front of the Function URL)."
   type        = string

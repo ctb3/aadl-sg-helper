@@ -66,6 +66,18 @@ export const config = {
   sessionsBucket: str("SESSIONS_BUCKET", ""),
   // PORT is the Lambda Web Adapter convention; also used locally.
   appPort: num("PORT", 8080),
+
+  // --- runtime feature flags (AWS AppConfig) ---
+  // Identifiers (not secrets) of the AppConfig feature-flag profile the app
+  // polls. Empty appconfigEnv (local dev) makes flags.ts fall back to env.
+  appconfigApp: str("APPCONFIG_APP", "aadl-sg"),
+  appconfigEnv: str("APPCONFIG_ENV", ""),
+  appconfigProfile: str("APPCONFIG_PROFILE", "flags"),
+  // Local/fail-open override for the store-images flag when AppConfig is
+  // unreachable (no env configured, no perms): keeps today's "always store".
+  storeImagesDefault: str("STORE_IMAGES", "on"),
+  // How long a fetched flag value is trusted before the next AppConfig poll.
+  flagCacheTtlMs: num("FLAG_CACHE_TTL_MS", 60000),
 } as const;
 
 export function tokenCost(inTok: number, outTok: number, inPerM: number, outPerM: number): number {

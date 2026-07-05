@@ -18,6 +18,10 @@ locals {
     GCP_SA_KEY_JSON     = data.aws_ssm_parameter.gcp_sa_key.value
     CLAUDE_READER_MODEL = var.claude_reader_model
     CLAUDE_THINKING     = var.claude_thinking
+    # AppConfig identifiers (not secrets) the flag reader polls at runtime.
+    APPCONFIG_APP     = aws_appconfig_application.flags.id
+    APPCONFIG_ENV     = aws_appconfig_environment.flags.environment_id
+    APPCONFIG_PROFILE = aws_appconfig_configuration_profile.flags.configuration_profile_id
   }
 }
 

@@ -41,6 +41,16 @@ resource "aws_iam_role_policy" "app_access" {
         Action   = ["s3:GetObject", "s3:PutObject"]
         Resource = "${aws_s3_bucket.sessions.arn}/sessions/*"
       },
+      {
+        Effect = "Allow"
+        Action = ["appconfig:StartConfigurationSession", "appconfig:GetLatestConfiguration"]
+        Resource = join("", [
+          "arn:aws:appconfig:${var.region}:${local.account_id}:",
+          "application/${aws_appconfig_application.flags.id}",
+          "/environment/${aws_appconfig_environment.flags.environment_id}",
+          "/configuration/${aws_appconfig_configuration_profile.flags.configuration_profile_id}",
+        ])
+      },
     ]
   })
 }

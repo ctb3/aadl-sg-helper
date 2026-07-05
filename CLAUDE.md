@@ -75,6 +75,15 @@ independently attributable). Client uploads full-res JPEG straight to S3 via pre
 (dodges the 6MB Function URL cap, keeps tier-2 crops high-res); every session
 logs photo/crop/results/verdicts under s3://aadl-sg-sessions-…/sessions/ for
 future labeling. Access gate = APP_PIN (.env) checked server-side.
+Image storage is behind the `store-images` AppConfig feature flag (runtime,
+per-account, flip without redeploy — src/app/flags.ts, infra/README.md; default
+ON). When OFF the transport forks: the client posts the photo inline (and the
+crop back on escalate) so NO image bytes ever hit S3 — only the telemetry JSON
+is kept, so accuracy/speed reporting is unaffected. `sessions-report.ts
+--summary` is the cross-version rollup (per version: seen, tier1/tier2 correct
+rates, gate%, per-step avg·p99); the default (no flag / a prefix arg) stays the
+single-version detail view. Telemetry lives in the per-session JSON (durable
+event log; summary computed on read) — never gated by the flag.
 Versioning is tag-driven: prod ships package.json's version verbatim (CI
 asserts tag == version); test builds stamp `X.Y.Z-test.<run>.<attempt>.g<sha>`
 via a Dockerfile ARG. The version shows on the page, prefixes sessions

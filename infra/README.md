@@ -10,7 +10,7 @@ Auth is GitHub OIDC → per-account role `aadl-sg-ci`. The test account's role t
 Stacks (`infra/terraform/`):
 
 - `bootstrap/` — Carl-only, admin SSO profile, once per account: TF state bucket, OIDC provider, `aadl-sg-ci` role + `aadl-sg-app-boundary` permissions boundary, ECR repo (immutable tags), the app-domain hosted zone.
-- `app/` — applied by CI: sessions bucket, Lambda exec role (under the boundary), the Lambda + public Function URL, ACM cert + CloudFront + DNS records for the custom domain. Secrets are read from SSM at deploy time.
+- `app/` — applied by CI: sessions bucket, Lambda exec role (under the boundary), the Lambda + public Function URL, ACM cert + CloudFront + DNS records for the custom domain, and the **AppConfig feature-flag stack** (`appconfig.tf`). Secrets are read from SSM at deploy time; feature flags are read at *runtime* (see below).
 
 The app answers at a custom domain per env — **prod `https://aadlcode.ctb3.net`, test `https://aadlcode-test.ctb3.net`** — via CloudFront in front of the Function URL. The raw Function URL (`terraform output function_url`) keeps working as a debugging bypass; the PIN gates both.
 
@@ -91,6 +91,49 @@ First test deploy = next push to main. Verify with the paid path once:
 
 > Migration note: the old account (619467956318) was fully torn down
 > 2026-07-05 after its session data was synced into the prod bucket.
+
+## Feature flags (AppConfig) — flip without a deploy
+
+Runtime flags live in an AppConfig **feature-flags** profile (`app=aadl-sg`,
+`env=test|prod`, `profile=flags`), read by the Lambda via `appconfigdata`
+(`src/app/flags.ts`). Terraform seeds them and does the initial deploy, but
+**flips happen out of band** (`ignore_changes` keeps `apply` from reverting
+them). A change propagates within ~60s (the flag cache TTL) — no redeploy.
+Each account is independent, so test and prod toggle separately.
+
+- **`store-images`** (default ON): persist the session photo/crop to S3. When
+  OFF, images never touch S3 (the client posts them inline; the server keeps
+  only the telemetry JSON) — so accuracy/speed reporting is unaffected either
+  way. See `src/app/sessions-report.ts --summary` for the cross-version rollup.
+
+**Flip it — console (simplest):** AppConfig → Applications → `aadl-sg` →
+Configuration profiles → `flags` → edit the `store-images` value (enabled
+on/off) → save a new version → **Start deployment** to the env with the
+`AppConfig.AllAtOnce` strategy.
+
+**Flip it — CLI:**
+
+```bash
+export AWS_PROFILE=aadl-sg-prod-admin   # or aadl-sg-test-admin
+APP=$(aws appconfig list-applications --query "Items[?Name=='aadl-sg'].Id" --output text)
+ENV=$(aws appconfig list-environments --application-id "$APP" --query "Items[0].Id" --output text)
+PROF=$(aws appconfig list-configuration-profiles --application-id "$APP" --query "Items[?Name=='flags'].Id" --output text)
+# New version with the flag OFF (enabled:true to turn it back on):
+aws appconfig create-hosted-configuration-version --application-id "$APP" \
+  --configuration-profile-id "$PROF" --content-type application/json \
+  --content '{"version":"1","flags":{"store-images":{"name":"store-images"}},"values":{"store-images":{"enabled":false}}}' \
+  /tmp/appconfig-ver.json   # VersionNumber is in the stdout JSON
+aws appconfig start-deployment --application-id "$APP" --environment-id "$ENV" \
+  --configuration-profile-id "$PROF" --configuration-version <VersionNumber> \
+  --deployment-strategy-id AppConfig.AllAtOnce
+```
+
+> **Bootstrap re-apply required (one-time, per account):** this feature added
+> AppConfig read actions to the `aadl-sg-app-boundary` and AppConfig management
+> actions to the `aadl-sg-ci` role — both in `bootstrap/`. Re-apply the
+> bootstrap stack (admin SSO, per account) **before** the app deploy that first
+> creates the AppConfig stack, or CI's `apply` hits AccessDenied and the runtime
+> flag read silently fails-open to storing.
 
 ## Local escape hatch (CI down / debugging)
 

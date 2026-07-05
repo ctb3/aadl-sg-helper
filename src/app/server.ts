@@ -8,6 +8,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { config } from "../config";
 import { dims } from "../image";
 import { AuthExpiredError, connect, loadJar, submitCode } from "./aadl";
+import { storeImages } from "./flags";
 import { runTier1, runTier2 } from "./pipeline";
 
 /**
@@ -15,13 +16,20 @@ import { runTier1, runTier2 } from "./pipeline";
  * locally (`npm run app`) and on Lambda behind the Web Adapter.
  *
  * Session flow (client drives it, S3 is the only state):
- *   POST /api/session   → { sessionId, uploadUrl }  presigned PUT for photo.jpg
+ *   POST /api/session   → { sessionId, storeImages, uploadUrl? }
  *   POST /api/extract   → tier 1; auto-runs tier 2 when the gate fails
- *   POST /api/escalate  → tier 2 on the stored crop (user rejected tier 1)
+ *   POST /api/escalate  → tier 2 on the crop (user rejected tier 1)
  *   POST /api/verdict   → writes the user's approve/reject trail + final code
  *
- * Every session leaves photo.jpg / crop.jpg / extract.json / verdict.json
- * under sessions/<id>/ — raw material for future labels.csv entries.
+ * The `store-images` AppConfig flag (see ./flags) gates image *retention*, not
+ * telemetry, and picks the transport at session start:
+ *   ON  → client PUTs photo.jpg via a presigned URL (dodges the 6MB Function
+ *         URL cap); server reads photo + crop back from S3 (the crop bridges
+ *         extract→escalate). Every session leaves photo/crop/extract/verdict
+ *         JSON under sessions/<id>/ — raw material for future labels.csv entries.
+ *   OFF → client posts the photo (and, on escalate, the crop) inline; the
+ *         server processes them in memory and writes *only* the telemetry JSON.
+ *         No image bytes ever land in S3.
  */
 
 const s3 = new S3Client({ region: config.awsRegion });
@@ -53,16 +61,38 @@ function send(res: http.ServerResponse, status: number, body: unknown): void {
   res.end(json);
 }
 
-async function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+// Default 1MB cap; the inline-image routes (extract/escalate when store-images
+// is OFF) carry a base64 JPEG, so they raise it (see MAX_BODY_BYTES).
+async function readJsonBody(
+  req: http.IncomingMessage,
+  maxBytes = 1_000_000,
+): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > 1_000_000) throw new Error("body too large");
+    if (size > maxBytes) throw new Error("body too large");
     chunks.push(chunk as Buffer);
   }
   const text = Buffer.concat(chunks).toString("utf8");
   return text ? JSON.parse(text) : {};
+}
+
+// Inline base64 JPEGs ride in these bodies when store-images is OFF. A ≤2400px
+// photo is ~1–3MB (~1.3–4MB base64); 9MB leaves margin under the client's
+// re-encode-to-fit guard while still rejecting absurd payloads.
+const MAX_BODY_BYTES: Record<string, number> = {
+  "/api/extract": 9_000_000,
+  "/api/escalate": 9_000_000,
+};
+
+/** Decode a raw-base64 or `data:...;base64,` string into a JPEG buffer. */
+function decodeImage(v: unknown, what: string): Buffer {
+  if (typeof v !== "string" || !v) throw new Error(`bad ${what}`);
+  const b64 = v.startsWith("data:") ? v.slice(v.indexOf(",") + 1) : v;
+  const buf = Buffer.from(b64, "base64");
+  if (!buf.length) throw new Error(`bad ${what}`);
+  return buf;
 }
 
 async function s3GetBuffer(key: string): Promise<Buffer> {
@@ -89,24 +119,39 @@ function requireSessionId(body: Record<string, unknown>): string {
 
 async function handleSession(): Promise<unknown> {
   const sessionId = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
-  const uploadUrl = await getSignedUrl(
-    s3,
-    new PutObjectCommand({
-      Bucket: config.sessionsBucket,
-      Key: sessionKey(sessionId, "photo.jpg"),
-      ContentType: "image/jpeg",
-    }),
-    { expiresIn: 600 },
-  );
-  return { sessionId, uploadUrl };
+  const keep = await storeImages();
+  // The presigned PUT (S3 transport) is issued only when we intend to keep the
+  // photo. When OFF the client posts it inline instead — nothing hits S3.
+  const uploadUrl = keep
+    ? await getSignedUrl(
+        s3,
+        new PutObjectCommand({
+          Bucket: config.sessionsBucket,
+          Key: sessionKey(sessionId, "photo.jpg"),
+          ContentType: "image/jpeg",
+        }),
+        { expiresIn: 600 },
+      )
+    : undefined;
+  return { sessionId, storeImages: keep, uploadUrl };
 }
 
 async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
   const sessionId = requireSessionId(body);
-  const photo = await s3GetBuffer(sessionKey(sessionId, "photo.jpg"));
+  // Transport is derived from the request shape, not a re-read of the flag, so
+  // it can't disagree with what the client actually did across a mid-session
+  // flip: an inline `photo` ⇒ store-images was OFF at session start; its
+  // absence ⇒ ON, and the photo was PUT to S3 (presigned).
+  const inline = typeof body.photo === "string" && body.photo.length > 0;
+  const keep = !inline;
+  const photo = inline
+    ? decodeImage(body.photo, "photo")
+    : await s3GetBuffer(sessionKey(sessionId, "photo.jpg"));
 
   const { tier1, cropJpeg } = await runTier1(photo);
-  await s3Put(sessionKey(sessionId, "crop.jpg"), cropJpeg, "image/jpeg");
+  // Persist the crop only when keeping images (it bridges extract→escalate);
+  // when OFF the client holds the crop (cropDataUrl) and hands it back.
+  if (keep) await s3Put(sessionKey(sessionId, "crop.jpg"), cropJpeg, "image/jpeg");
 
   // Gate failure auto-escalates server-side: the user should never be shown a
   // result the bake-off proved unreliable.
@@ -115,6 +160,7 @@ async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
   await s3PutJson(sessionKey(sessionId, "extract.json"), {
     at: new Date().toISOString(),
     version: APP_VERSION,
+    storeImages: keep,
     photo: { ...(await dims(photo)), bytes: photo.length },
     tier1, // includes raw GCV words/geometry for later analysis
     tier2,
@@ -130,7 +176,11 @@ async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
 
 async function handleEscalate(body: Record<string, unknown>): Promise<unknown> {
   const sessionId = requireSessionId(body);
-  const crop = await s3GetBuffer(sessionKey(sessionId, "crop.jpg"));
+  // Inline `crop` ⇒ OFF (client hands back the crop it holds); its absence ⇒
+  // re-read the stored crop from S3. Mirrors the extract transport, race-free.
+  const crop = typeof body.crop === "string" && body.crop
+    ? decodeImage(body.crop, "crop")
+    : await s3GetBuffer(sessionKey(sessionId, "crop.jpg"));
   const tier2 = await runTier2(crop);
   await s3PutJson(sessionKey(sessionId, "tier2.json"), { at: new Date().toISOString(), tier2 });
   return { tier2 };
@@ -142,6 +192,10 @@ async function handleVerdict(body: Record<string, unknown>): Promise<unknown> {
     at: new Date().toISOString(),
     ...(typeof body.record === "object" && body.record !== null ? body.record : {}),
   });
+  // No image cleanup needed: a photo only ever reaches S3 when store-images was
+  // ON at session start (the client used the presigned PUT), so anything stored
+  // was stored intentionally. Flipping OFF is forward-looking — new sessions
+  // post inline and never write images.
   return { ok: true };
 }
 
@@ -261,14 +315,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
-    const body = await readJsonBody(req);
+    const body = await readJsonBody(req, MAX_BODY_BYTES[url.pathname]);
     send(res, 200, await handler(body));
   } catch (err: any) {
     const msg = String(err?.message ?? err);
     if (err?.name === "NoSuchKey") {
       send(res, 404, { error: "session object not found (upload the photo first?)" });
     } else if (
-      msg === "bad sessionId" || msg === "body too large" || msg === "bad code" ||
+      msg.startsWith("bad ") || msg === "body too large" ||
       msg === "username and password required" || msg.startsWith("accounts must be") ||
       err instanceof SyntaxError
     ) {

@@ -29,8 +29,11 @@ toggle, default off).
 
 ## The one governing constraint
 
-Codes are USER-GENERATED: `[A-Z0-9]`, ≤12 chars, arbitrary — no dictionary, no
-word priors. Never let an LLM "correct" toward a real word; prompts must demand
+Codes are USER-GENERATED: `[A-Z0-9]`, arbitrary — no dictionary, no word
+priors, and NO length limit: signup caps new codes at 12 chars, but
+grandfathered longer ones are live (HOTLIKEHARISSA, 14, redeemed 2026-07-05) —
+never (re)add a length check anywhere (removed from app+prompt in v0.3.2).
+Never let an LLM "correct" toward a real word; prompts must demand
 literal glyph-by-glyph transcription (see `src/prompt.ts`). There is no
 validation oracle — ground truth is hand labels only (`data/labels.csv`).
 Scoring normalizes case/whitespace (submission is case/space-insensitive).

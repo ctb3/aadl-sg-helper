@@ -139,15 +139,15 @@ export function isPrintedLine(text: string): boolean {
   const a = alnum(text);
   if (!a) return true;
 
-  // Ring text: "play.aadl.org" repeated around the circle (any fragment with
-  // AADL twice can't be a ≤12-char code).
+  // Ring text: "play.aadl.org" repeated around the circle — a fragment
+  // containing AADL twice is ring text, not handwriting.
   if ((a.match(/AADL/g)?.length ?? 0) >= 2) return true;
 
   // Mostly made of known printed copy (handles merged/concatenated lines).
   if (phraseCoverage(a) >= PHRASE_COVERAGE_THRESHOLD) return true;
 
   // Upside-down ring text misreads repeat the same token ("held 6101pee held
-  // 6101pee held…"). A ≤12-char code can't repeat a token 3+ times.
+  // 6101pee held…"). Repeating the same token 3+ times is ring text, not a code.
   const tokens = text
     .toUpperCase()
     .split(/\s+/)

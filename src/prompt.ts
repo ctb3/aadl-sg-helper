@@ -15,7 +15,7 @@ export const READER_USER =
   "- Ignore ALL printed text (e.g. 'play.aadl.org', 'WE PLAY THE SUMMER GAME', " +
   "ring text, footer). Read ONLY the handwritten code, usually written in a " +
   "white horizontal band.\n" +
-  "- Charset: A-Z and 0-9 only. Output uppercase. Maximum 12 characters.\n" +
+  "- Charset: A-Z and 0-9 only. Output uppercase.\n" +
   "- The code is USER-GENERATED and arbitrary. It is NOT a real word and is not " +
   "guaranteed pronounceable. Do NOT 'correct' it toward any real or plausible " +
   "word. Transcribe each glyph literally, exactly as drawn, even if the result " +

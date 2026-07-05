@@ -134,7 +134,6 @@
     <img class="crop" id="r-crop" alt="detected code region">
     <div class="card">
       <div class="code" id="r-code"></div>
-      <p class="m-note" id="r-tag" hidden></p>
     </div>
     <div class="row">
       <button class="danger" id="r-reject">Try harder</button>
@@ -148,7 +147,7 @@
     <img class="crop" id="m-crop" alt="detected code region">
     <div class="card">
       <p id="m-head">Type the code as written:</p>
-      <input type="text" id="m-input" autocomplete="off" autocapitalize="characters" maxlength="12">
+      <input type="text" id="m-input" autocomplete="off" autocapitalize="characters">
       <div class="alts" id="m-alts"></div>
     </div>
     <button class="primary big" id="m-submit">Use this code</button>
@@ -212,10 +211,10 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const norm = (s) => (s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-// Game codes are [A-Z0-9] and at most 12 characters — any longer read is
-// known-wrong before we ever spend a submission on it.
-const MAX_CODE = 12;
-const validCode = (s) => norm(s).length > 0 && norm(s).length <= MAX_CODE;
+// Game codes are [A-Z0-9]. No length cap: signup limits new codes to 12
+// chars, but grandfathered longer ones exist in the wild (HOTLIKEHARISSA),
+// and aadl.org's response is the real validity oracle anyway.
+const validCode = (s) => norm(s).length > 0;
 
 let state = null;
 
@@ -470,11 +469,6 @@ function presentResult(code) {
   state.presented = { tier: 1, code };
   $("r-crop").src = state.cropDataUrl;
   $("r-code").textContent = code || "(nothing read)";
-  const tooLong = norm(code).length > MAX_CODE;
-  $("r-tag").textContent = tooLong
-    ? "Longer than any real code (max " + MAX_CODE + " characters) — probably picked up other text."
-    : "";
-  $("r-tag").hidden = !tooLong;
   show("v-result");
 }
 
@@ -766,11 +760,6 @@ $("r-reject").onclick = reject;
 $("m-submit").onclick = () => {
   const code = norm($("m-input").value);
   if (!code) return;
-  if (code.length > MAX_CODE) {
-    $("m-note").textContent = "Codes are at most " + MAX_CODE + " characters — trim it down.";
-    $("m-note").hidden = false;
-    return;
-  }
   state.verdicts.push({ tier: 3, code, action: "manual_entry" });
   finish(code, "manual");
 };

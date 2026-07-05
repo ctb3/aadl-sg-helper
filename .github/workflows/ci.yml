@@ -1,0 +1,33 @@
+# PR checks. Deliberately credential-free: PRs get no AWS access at all —
+# the OIDC trust in both accounts only matches main pushes / v* tags.
+name: ci
+
+on:
+  pull_request:
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - run: terraform fmt -check -recursive infra/terraform
+      - run: |
+          terraform -chdir=infra/terraform/bootstrap init -backend=false
+          terraform -chdir=infra/terraform/bootstrap validate
+      - run: |
+          terraform -chdir=infra/terraform/app init -backend=false
+          terraform -chdir=infra/terraform/app validate

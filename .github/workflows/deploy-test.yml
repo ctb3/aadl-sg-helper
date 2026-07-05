@@ -1,0 +1,81 @@
+# Every push to main deploys the test account (825555019530).
+# Version/tag are stamped per run (immutable ECR tags); no commit-back.
+name: deploy-test
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-test
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: test
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Compute version and image tag
+        id: meta
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          BASE=$(jq -r .version package.json)
+          # run_attempt keeps re-runs unique under ECR tag immutability.
+          SUFFIX="${{ github.run_number }}.${{ github.run_attempt }}"
+          echo "version=${BASE}-test.${SUFFIX}.g${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "tag=test-${SUFFIX}-g${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          echo "image=${ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/aadl-sg-app" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        # --provenance/--sbom=false: BuildKit attestations create an OCI image
+        # index, which Lambda rejects; it needs a single-platform manifest.
+        run: |
+          docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
+            --build-arg APP_VERSION="${{ steps.meta.outputs.version }}" \
+            -f infra/Dockerfile \
+            -t "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" \
+            --push .
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform apply
+        run: |
+          terraform -chdir=infra/terraform/app init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="region=${AWS_REGION}"
+          terraform -chdir=infra/terraform/app apply -auto-approve -input=false \
+            -var-file=test.tfvars \
+            -var "region=${AWS_REGION}" \
+            -var "image_uri=${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}"
+
+      - name: Smoke test (free path)
+        run: |
+          URL=$(terraform -chdir=infra/terraform/app output -raw function_url)
+          PIN=$(aws ssm get-parameter --name /aadl-sg/app-pin --with-decryption \
+            --query Parameter.Value --output text)
+          echo "::add-mask::$PIN"
+          APP_PIN="$PIN" npx tsx infra/apitest.ts "$URL"

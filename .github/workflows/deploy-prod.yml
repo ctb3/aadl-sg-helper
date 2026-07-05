@@ -1,0 +1,107 @@
+# Publishing a GitHub Release vX.Y.Z deploys the prod account (766253192238).
+# Publication IS the manual gate. Rollback: workflow_dispatch this workflow
+# FROM THE OLD TAG's ref (the OIDC trust only matches refs/tags/v*) — the
+# image already exists in ECR, so the build is skipped and Lambda repoints.
+name: deploy-prod
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-prod
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+          else
+            echo "::error::workflow_dispatch must be run from a v* tag ref"; exit 1
+          fi
+          case "$TAG" in
+            v[0-9]*) echo "tag=$TAG" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::tag '$TAG' does not look like vX.Y.Z"; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Gate — tag must match package.json version
+        run: |
+          PKG="v$(jq -r .version package.json)"
+          if [ "$PKG" != "${{ steps.tag.outputs.tag }}" ]; then
+            echo "::error::package.json is $PKG but the tag is ${{ steps.tag.outputs.tag }}"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Resolve registry
+        id: meta
+        run: |
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          echo "image=${ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/aadl-sg-app" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image (skipped when the tag already exists — rollback path)
+        # No APP_VERSION build-arg: prod ships package.json as-is; the gate
+        # above already proved it equals the tag.
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          IMAGE="${{ steps.meta.outputs.image }}:$TAG"
+          if aws ecr describe-images --repository-name aadl-sg-app \
+               --image-ids imageTag="$TAG" >/dev/null 2>&1; then
+            echo "$IMAGE already in ECR — reusing the exact prior artifact"
+          else
+            docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
+              -f infra/Dockerfile -t "$IMAGE" --push .
+          fi
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform apply
+        run: |
+          terraform -chdir=infra/terraform/app init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="region=${AWS_REGION}"
+          terraform -chdir=infra/terraform/app apply -auto-approve -input=false \
+            -var-file=prod.tfvars \
+            -var "region=${AWS_REGION}" \
+            -var "image_uri=${{ steps.meta.outputs.image }}:${{ steps.tag.outputs.tag }}"
+
+      - name: Smoke test (free path)
+        run: |
+          URL=$(terraform -chdir=infra/terraform/app output -raw function_url)
+          PIN=$(aws ssm get-parameter --name /aadl-sg/app-pin --with-decryption \
+            --query Parameter.Value --output text)
+          echo "::add-mask::$PIN"
+          APP_PIN="$PIN" npx tsx infra/apitest.ts "$URL"

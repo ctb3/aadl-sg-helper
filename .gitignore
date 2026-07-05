@@ -6,6 +6,14 @@ infra/.lambda-env.json
 infra/.role-policy.json
 infra/.ecr-repo-policy.json
 
+# Terraform: state lives in S3 (bootstrap's first apply is local + migrated away)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+
+# One-time old-account session download staging (infra/README.md cutover step)
+sessions-archive/
+
 # Generated / cached artifacts
 data/prepped/
 data/crops/

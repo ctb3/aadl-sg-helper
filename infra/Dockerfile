@@ -13,6 +13,13 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
 
+# CI stamps the effective version into test images (e.g. 0.2.4-test.17.1.gabc1234):
+# the version is an intrinsic property of the immutable image, and server.ts /
+# the sessions/v<version>/ S3 prefix pick it up unchanged. Prod builds pass no
+# arg — package.json ships as-is (the workflow asserts it equals the git tag).
+ARG APP_VERSION=""
+RUN [ -z "$APP_VERSION" ] || npm pkg set version="$APP_VERSION"
+
 ENV PORT=8080 NODE_ENV=production
 EXPOSE 8080
 CMD ["npx", "tsx", "src/app/server.ts"]

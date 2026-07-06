@@ -554,31 +554,39 @@ async function reencodeToFit(blob) {
   return b64;
 }
 
+// Resolves to the session's crop data URL, whichever way it was produced
+// (background localCrop after extract, or set directly on the off path).
+async function ensureCrop() {
+  if (state.cropDataUrl) return state.cropDataUrl;
+  if (state.cropReady) return state.cropReady;
+  return "";
+}
+
 // The crop always rides inline: it's cut from the local original (the highest-
 // res source there is) — the server reads it directly and, when store-images
 // is on (`keep`), persists it as the session's crop.jpg.
-function escalateBody() {
-  return { sessionId: state.sessionId, crop: state.cropDataUrl, keep: state.storeImages };
+async function escalateBody() {
+  return { sessionId: state.sessionId, crop: await ensureCrop(), keep: state.storeImages };
 }
 
 // Only ever shows the tier-1 read, and only on the no-account path — with an
 // account connected everything auto-submits, and Claude's read goes straight
 // to the manual screen as its prefill.
-function presentResult(code) {
+async function presentResult(code) {
   state.presented = { tier: 1, code };
-  $("r-crop").src = state.cropDataUrl;
+  $("r-crop").src = await ensureCrop();
   $("r-code").textContent = code || "(nothing read)";
   show("v-result");
 }
 
-function showManual(notice) {
+async function showManual(notice) {
   const prefill = norm((state.tier2 && state.tier2.code) || state.tier1.code || "");
   $("m-head").textContent = prefill
     ? "Our best guess — submit it, or fix it here:"
     : "Type the code as written:";
   $("m-note").textContent = notice || "";
   $("m-note").hidden = !notice;
-  $("m-crop").src = state.cropDataUrl;
+  $("m-crop").src = await ensureCrop();
   $("m-input").value = prefill;
   $("m-submit").textContent = activeAccounts().length
     ? "✓ Submit to AADL" : "✓ Submit at aadl.org";
@@ -661,11 +669,18 @@ async function onPhoto(file) {
     state.tier2 = res.tier2;
     state.extractMode = res.extractMode || state.extractMode; // fresher on a mid-flight flip
 
-    // Our own crop, from the ORIGINAL photo (see localCrop) — shown on every
-    // result screen and handed to escalate. Built before any branch needs it.
-    t = Date.now();
-    state.cropDataUrl = await localCrop(file, res.tier1.bbox || null);
-    state.timings.cropLocalMs = Date.now() - t;
+    // Our own crop, from the ORIGINAL photo (see localCrop) — kicked off in
+    // the background: the tier1_auto happy path never shows or sends it, so
+    // it must not sit on the critical path (~370ms measured in the field).
+    // Everything that needs it awaits ensureCrop().
+    const cropT = Date.now();
+    state.cropReady = localCrop(file, res.tier1.bbox || null)
+      .then((u) => {
+        state.timings.cropLocalMs = Date.now() - cropT;
+        state.cropDataUrl = u;
+        return u;
+      })
+      .catch(() => "");
 
     if (res.tier1.gatePassed && validCode(res.tier1.code)) {
       if (autoMode()) {
@@ -687,7 +702,7 @@ async function onPhoto(file) {
     if (!state.tier2 && state.extractMode === "full") {
       show("v-busy", "Asking Claude for a closer look…");
       t = Date.now();
-      const r = await api("/api/escalate", escalateBody());
+      const r = await api("/api/escalate", await escalateBody());
       state.timings.escalateMs = Date.now() - t;
       state.timings.escalateServer = r.serverTimings;
       state.tier2 = r.tier2;
@@ -715,7 +730,7 @@ async function reject() {
   try {
     show("v-busy", "Asking Claude for a closer look…");
     const t = Date.now();
-    const r = await api("/api/escalate", escalateBody());
+    const r = await api("/api/escalate", await escalateBody());
     state.timings.escalateMs = Date.now() - t;
     state.timings.escalateServer = r.serverTimings;
     state.tier2 = r.tier2;
@@ -814,9 +829,10 @@ async function submitToAadl(code) {
     state.verdicts.push({ tier: state.presented.tier, code, action: "aadl_rejected" });
     show("v-busy", "AADL didn't recognize it, asking Claude…");
     const t2 = Date.now();
-    const r = await api("/api/escalate", escalateBody());
+    const r = await api("/api/escalate", await escalateBody());
     state.timings.escalateMs = Date.now() - t2;
     state.tier2 = r.tier2;
+    state.timings.escalateServer = r.serverTimings;
     const newCode = norm(r.tier2.code);
     if (newCode && newCode !== code) {
       state.verdicts.push({ tier: 2, code: newCode, action: "auto_submitted" });

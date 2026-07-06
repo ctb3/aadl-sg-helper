@@ -234,16 +234,24 @@ async function main(): Promise<void> {
   }
   console.log(`upload:   ${stats(T("uploadMs"))}  bytes: ${stats(done.map((r) => r.photo.bytes ?? 0).filter(Boolean)).replace(/ms/g, "B")}`);
   console.log(`extract:  ${stats(T("extractMs"))}  (server GCV: ${stats(rows.map((r) => r.t1LatMs!).filter((x) => x != null))})`);
+  // s3TailMs = concurrent tail writes (photo/crop/extract.json); older
+  // serverTimings recorded serial s3PutCropMs/s3PutJsonMs instead.
+  const puts = (st: Record<string, number | boolean>): number | null => {
+    if (typeof st.s3TailMs === "number") return st.s3TailMs;
+    if (typeof st.s3PutJsonMs === "number") return (st.s3PutJsonMs as number) + ((st.s3PutCropMs as number) || 0);
+    return null;
+  };
   const S = (k: string): number[] =>
     rows.map((r) => r.serverT[k]).filter((x): x is number => typeof x === "number");
   if (S("gcvMs").length) {
     const cold = rows.filter((r) => r.serverT.coldStart === true).length;
     console.log(
       `  server: flag ${stats(S("flagMs"))} · s3get ${stats(S("s3GetMs"))} · norm ${stats(S("normMs"))} · ` +
-      `crop ${stats(S("cropMs"))} · putCrop ${stats(S("s3PutCropMs"))} · putJson ${stats(S("s3PutJsonMs"))} · ` +
+      `crop ${stats(S("cropMs"))} · puts ${stats(rows.map((r) => puts(r.serverT)).filter((x): x is number => x !== null))} · ` +
       `total ${stats(S("totalMs"))} · cold starts ${cold}/${rows.length}`,
     );
   }
+  if (T("cropLocalMs").length) console.log(`local crop (client, from original): ${stats(T("cropLocalMs"))}`);
   console.log(`escalate: ${stats(T("escalateMs"))}  (server Claude: ${stats(rows.map((r) => r.t2LatMs!).filter((x) => x != null))})`);
   const E = (k: string): number[] =>
     rows.map((r) => r.escServerT[k]).filter((x): x is number => typeof x === "number");
@@ -348,16 +356,23 @@ async function summary(): Promise<void> {
     console.log(`\n== server extract breakdown (avg·p99; cold = cold-start share)`);
     console.log(
       "version".padEnd(26) + "s3get".padEnd(15) + "gcv".padEnd(15) + "crop".padEnd(15) +
-      "putCrop".padEnd(15) + "putJson".padEnd(15) + "total".padEnd(15) + "cold",
+      "puts".padEnd(15) + "total".padEnd(15) + "cold",
     );
     for (const v of withServer) {
       const rs = byVer.get(v)!;
       const col = (k: string): string =>
         ap(rs.map((r) => r.serverT[k]).filter((x): x is number => typeof x === "number"));
+      // s3TailMs (concurrent tail) with the older serial fields as fallback.
+      const putsCol = ap(rs.map((r) => {
+        const st = r.serverT;
+        if (typeof st.s3TailMs === "number") return st.s3TailMs;
+        if (typeof st.s3PutJsonMs === "number") return (st.s3PutJsonMs as number) + ((st.s3PutCropMs as number) || 0);
+        return null;
+      }).filter((x): x is number => x !== null));
       console.log(
         v.slice(0, 25).padEnd(26) +
         col("s3GetMs").padEnd(15) + col("gcvMs").padEnd(15) + col("cropMs").padEnd(15) +
-        col("s3PutCropMs").padEnd(15) + col("s3PutJsonMs").padEnd(15) + col("totalMs").padEnd(15) +
+        putsCol.padEnd(15) + col("totalMs").padEnd(15) +
         rate(rs.filter((r) => r.serverT.coldStart === true).length, rs.length),
       );
     }

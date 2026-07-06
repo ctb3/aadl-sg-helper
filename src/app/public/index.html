@@ -381,20 +381,35 @@ const UPLOAD_MAX_EDGE = 2400;
 // encode now runs in a Web Worker (not visibility-throttled) via
 // OffscreenCanvas.convertToBlob, with the old main-thread path as fallback.
 // Both report drawMs/blobMs so the next batch confirms (or re-blames).
-const JPEG_QUALITY = 0.85;
+// 0.7 (was 0.85): the 2026-07-06 quality ladder showed GCV is insensitive to
+// JPEG quality at 2400px (q60/q70 even nudged gate precision up) at roughly
+// half the bytes — and tier-2 no longer reads this upload (it gets a crop cut
+// from the local ORIGINAL, see localCrop), so nothing downstream needs q85.
+const JPEG_QUALITY = 0.7;
+// Escalation crops: same padding as the server's CROP_PAD_PCT and the same
+// ≤1500px + q0.9 shape the tier-2 bake measured at 95.2% from original-res.
+const CROP_PAD = 0.6;
+const CROP_MAX_EDGE = 1500;
+const CROP_QUALITY = 0.9;
 
 const workerUrl = URL.createObjectURL(new Blob([`
 self.onmessage = async (e) => {
-  const { rawBytes, type, maxEdge, quality } = e.data;
+  const { rawBytes, type, maxEdge, quality, rect } = e.data;
   try {
     let t = Date.now();
     const bmp = await createImageBitmap(new Blob([rawBytes], { type }));
     const decodeMs = Date.now() - t;
-    const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
-    const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+    // rect = normalized crop of the ORIENTED image (createImageBitmap bakes
+    // EXIF orientation in, matching the bbox space GCV reported on).
+    const sx = rect ? Math.floor(rect.left * bmp.width) : 0;
+    const sy = rect ? Math.floor(rect.top * bmp.height) : 0;
+    const sw = rect ? Math.max(1, Math.min(bmp.width - sx, Math.ceil(rect.width * bmp.width))) : bmp.width;
+    const sh = rect ? Math.max(1, Math.min(bmp.height - sy, Math.ceil(rect.height * bmp.height))) : bmp.height;
+    const scale = Math.min(1, maxEdge / Math.max(sw, sh));
+    const w = Math.round(sw * scale), h = Math.round(sh * scale);
     t = Date.now();
     const canvas = new OffscreenCanvas(w, h);
-    canvas.getContext("2d").drawImage(bmp, 0, 0, w, h);
+    canvas.getContext("2d").drawImage(bmp, sx, sy, sw, sh, 0, 0, w, h);
     bmp.close();
     const drawMs = Date.now() - t;
     t = Date.now();
@@ -406,13 +421,14 @@ self.onmessage = async (e) => {
 };
 `], { type: "text/javascript" }));
 
-function encodeInWorker(rawBytes, type) {
+function encodeInWorker(rawBytes, type, opts) {
+  const o = opts || { maxEdge: UPLOAD_MAX_EDGE, quality: JPEG_QUALITY };
   return new Promise((resolve, reject) => {
     let w;
     try { w = new Worker(workerUrl); } catch (err) { reject(err); return; }
     w.onmessage = (e) => { w.terminate(); e.data.ok ? resolve(e.data) : reject(new Error(e.data.error)); };
     w.onerror = (e) => { w.terminate(); reject(new Error(e.message || "worker error")); };
-    w.postMessage({ rawBytes, type, maxEdge: UPLOAD_MAX_EDGE, quality: JPEG_QUALITY }, [rawBytes]);
+    w.postMessage({ rawBytes, type, maxEdge: o.maxEdge, quality: o.quality, rect: o.rect || null }, [rawBytes]);
   });
 }
 
@@ -462,9 +478,48 @@ async function toJpeg(file) {
   return { ...out, fileReadMs, encodeMs: out.drawMs + out.blobMs };
 }
 
-// --- inline transport (store-images OFF) ---
-// When the flag is off the photo never touches S3: it rides inline in the
-// extract call and the crop rides back in escalate. Base64 a blob in chunks
+// --- local escalation crop ---
+// Padded normalized rect for the tier-2 crop (the server CROP_PAD_PCT's twin).
+function padRect(bbox) {
+  const x0 = Math.min(bbox.x0, bbox.x1), x1 = Math.max(bbox.x0, bbox.x1);
+  const y0 = Math.min(bbox.y0, bbox.y1), y1 = Math.max(bbox.y0, bbox.y1);
+  const px = (x1 - x0) * CROP_PAD, py = (y1 - y0) * CROP_PAD;
+  const left = Math.max(0, x0 - px), top = Math.max(0, y0 - py);
+  return { left, top, width: Math.min(1, x1 + px) - left, height: Math.min(1, y1 + py) - top };
+}
+
+// Cut the tier-2 crop from the ORIGINAL photo, not the 2400px upload: the
+// 2026-07-06 bake read 95.2% from original-res crops vs 92.1% from q70-upload
+// crops. bbox null = GCV found no line — the whole photo stands in, downscaled,
+// same as the server's fallback. Returns a data URL (display + escalate body).
+async function localCrop(file, bbox) {
+  const rect = bbox ? padRect(bbox) : null;
+  try {
+    const out = await encodeInWorker(await file.arrayBuffer(), file.type || "image/jpeg",
+      { maxEdge: CROP_MAX_EDGE, quality: CROP_QUALITY, rect });
+    return "data:image/jpeg;base64," + (await blobToB64(out.blob));
+  } catch {
+    // Worker-less fallback: crop the 2400px upload frame on the main thread
+    // (guaranteed-decodable JPEG; slightly softer source, still a line crop).
+    const bmp = await createImageBitmap(state.jpegBlob);
+    const sx = rect ? Math.floor(rect.left * bmp.width) : 0;
+    const sy = rect ? Math.floor(rect.top * bmp.height) : 0;
+    const sw = rect ? Math.max(1, Math.min(bmp.width - sx, Math.ceil(rect.width * bmp.width))) : bmp.width;
+    const sh = rect ? Math.max(1, Math.min(bmp.height - sy, Math.ceil(rect.height * bmp.height))) : bmp.height;
+    const scale = Math.min(1, CROP_MAX_EDGE / Math.max(sw, sh));
+    const c = document.createElement("canvas");
+    c.width = Math.round(sw * scale); c.height = Math.round(sh * scale);
+    c.getContext("2d").drawImage(bmp, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    if (bmp.close) bmp.close();
+    const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", CROP_QUALITY));
+    c.width = c.height = 0;
+    return "data:image/jpeg;base64," + (await blobToB64(blob));
+  }
+}
+
+// --- inline transport ---
+// The photo rides inline in the extract call (one network pass, GCV starts on
+// arrival) and the crop rides inline in escalate. Base64 a blob in chunks
 // (btoa on a whole 2400px frame overflows the arg on some engines).
 async function blobToB64(blob) {
   const buf = new Uint8Array(await blob.arrayBuffer());
@@ -475,10 +530,9 @@ async function blobToB64(blob) {
   return btoa(s);
 }
 
-// The Function URL request cap is ~6MB (the very reason the ON path uses a
-// presigned PUT). A ≤2400px JPEG is almost always well under it; this only
-// bites on an unusually heavy frame, shrinking it just enough to fit. GCV +
-// the single-line crop are unaffected at these sizes.
+// The Function URL request cap is ~6MB. A ≤2400px q0.7 JPEG is almost always
+// well under it; this only bites on an unusually heavy frame, shrinking it
+// just enough to fit. GCV + the single-line crop are unaffected at these sizes.
 async function reencodeToFit(blob) {
   const LIMIT = 5_500_000; // base64 chars, safely under the 6MB request cap
   let b64 = await blobToB64(blob);
@@ -500,12 +554,11 @@ async function reencodeToFit(blob) {
   return b64;
 }
 
-// Escalate reads the crop from S3 when ON; when OFF the client hands back the
-// crop it's holding (cropDataUrl) so nothing had to be stored to bridge here.
+// The crop always rides inline: it's cut from the local original (the highest-
+// res source there is) — the server reads it directly and, when store-images
+// is on (`keep`), persists it as the session's crop.jpg.
 function escalateBody() {
-  return state.storeImages
-    ? { sessionId: state.sessionId }
-    : { sessionId: state.sessionId, crop: state.cropDataUrl };
+  return { sessionId: state.sessionId, crop: state.cropDataUrl, keep: state.storeImages };
 }
 
 // Only ever shows the tier-1 read, and only on the no-account path — with an
@@ -552,6 +605,7 @@ async function onPhoto(file) {
     show("v-busy", prepMsg());
     let t = Date.now();
     const jpeg = await toJpeg(file);
+    state.jpegBlob = jpeg.blob; // localCrop's worker-less fallback source
     Object.assign(state.timings, {
       prepMs: Date.now() - t,
       fileReadMs: jpeg.fileReadMs,
@@ -583,23 +637,19 @@ async function onPhoto(file) {
       return showManual("Sorry — automatic code reading is switched off right now. Type the code from the sign:");
     }
 
-    let extractBody;
-    if (state.storeImages) {
-      show("v-busy", "Uploading…");
-      t = Date.now();
-      const up = await fetch(s.uploadUrl, {
-        method: "PUT", headers: { "content-type": "image/jpeg" }, body: jpeg.blob,
-      });
-      if (!up.ok) throw new Error("upload failed (HTTP " + up.status + ")");
-      state.timings.uploadMs = Date.now() - t;
-      extractBody = { sessionId: state.sessionId };
-    } else {
-      // Off: send the photo inline; nothing is ever written to S3.
-      show("v-busy", "Preparing…");
-      t = Date.now();
-      extractBody = { sessionId: state.sessionId, photo: await reencodeToFit(jpeg.blob) };
-      state.timings.uploadMs = Date.now() - t; // inline encode ≈ the "upload" step
-    }
+    // One network pass: the photo rides inline in extract (the old presigned
+    // S3 PUT + server GET moved the same bytes twice, serially, before GCV
+    // could start). `keep` echoes the session's store-images verdict — the
+    // SERVER persists the photo, overlapped with GCV. uploadMs is now just the
+    // base64 encode; the wire time lives in extractMs (server totalMs splits it).
+    t = Date.now();
+    const extractBody = {
+      sessionId: state.sessionId,
+      photo: await reencodeToFit(jpeg.blob),
+      keep: state.storeImages,
+      clientCrop: true, // we cut our own tier-2 crop; skip the crop payload
+    };
+    state.timings.uploadMs = Date.now() - t;
     state.timings.uploadBytes = jpeg.blob.size;
 
     show("v-busy", "Reading the sign…");
@@ -609,8 +659,13 @@ async function onPhoto(file) {
     state.timings.server = res.serverTimings; // per-step server breakdown → verdict.json
     state.tier1 = res.tier1;
     state.tier2 = res.tier2;
-    state.cropDataUrl = res.cropDataUrl;
     state.extractMode = res.extractMode || state.extractMode; // fresher on a mid-flight flip
+
+    // Our own crop, from the ORIGINAL photo (see localCrop) — shown on every
+    // result screen and handed to escalate. Built before any branch needs it.
+    t = Date.now();
+    state.cropDataUrl = await localCrop(file, res.tier1.bbox || null);
+    state.timings.cropLocalMs = Date.now() - t;
 
     if (res.tier1.gatePassed && validCode(res.tier1.code)) {
       if (autoMode()) {

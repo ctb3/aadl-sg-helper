@@ -1,6 +1,7 @@
 import { config } from "../config";
-import { cropWithPadding, downscaleToLongestEdge, fitsAsIs } from "../image";
+import { cropAndDownscale, downscaleToLongestEdge, fitsAsIs } from "../image";
 import { alnum, combinedLine, gcvLines } from "../postproc";
+import type { BBox } from "../types";
 import { claudeReader } from "../readers/claude";
 import type { GcvWord } from "../readers/gcv";
 import { gcvReader } from "../readers/gcv";
@@ -27,6 +28,9 @@ export interface Tier1 {
   gatePassed: boolean;
   /** false = GCV found no candidate line; the crop is the full photo. */
   usedLine: boolean;
+  /** Chosen line's bbox, normalized to the ORIENTED image (resolution-free) —
+   * the client cuts its escalation crop from its local original with it. */
+  bbox: BBox | null;
   latencyMs: number;
   costUsd: number;
   /** Full GCV output (all words + geometry) — session log only, never client. */
@@ -54,7 +58,7 @@ export async function runTier1(
   // The crop is produced either way: tier 2 and the manual view both show it.
   t = Date.now();
   const cropJpeg = line
-    ? await downscaleToLongestEdge(await cropWithPadding(orig, line.bbox, CROP_PAD_PCT), config.maxEdge)
+    ? await cropAndDownscale(orig, line.bbox, CROP_PAD_PCT, config.maxEdge)
     : await downscaleToLongestEdge(orig, config.maxEdge);
   const cropMs = Date.now() - t;
 
@@ -66,6 +70,7 @@ export async function runTier1(
       minConf,
       gatePassed,
       usedLine: !!line,
+      bbox: line?.bbox ?? null,
       latencyMs: raw.latencyMs,
       costUsd: raw.costUsd ?? 0,
       raw,

@@ -71,6 +71,15 @@ async function refresh(): Promise<void> {
   return inflight;
 }
 
+/** Stale-while-revalidate: once primed, serve last-known values immediately
+ * and let the TTL-expired poll run in the background — an expired TTL must
+ * never add an AppConfig round-trip to a user's extract. Only the process's
+ * first read (nothing cached yet) blocks. */
+async function ensureFresh(): Promise<void> {
+  if (fetchedAt === 0) return refresh();
+  void refresh();
+}
+
 const envBool = (v: string): boolean => !["off", "false", "0", "no"].includes(v.trim().toLowerCase());
 
 /**
@@ -80,7 +89,7 @@ const envBool = (v: string): boolean => !["off", "false", "0", "no"].includes(v.
  */
 export async function flag(name: string, envDefault: string): Promise<boolean> {
   if (!configured()) return envBool(envDefault);
-  await refresh();
+  await ensureFresh();
   const v = cached?.[name];
   if (v && typeof v.enabled === "boolean") return v.enabled;
   return envBool(envDefault);
@@ -106,7 +115,7 @@ const parseMode = (v: unknown): ExtractMode | null =>
 export async function extractMode(): Promise<ExtractMode> {
   const envDefault = parseMode(config.extractModeDefault.trim().toLowerCase()) ?? "full";
   if (!configured()) return envDefault;
-  await refresh();
+  await ensureFresh();
   const v = cached?.["extract-mode"];
   if (v && typeof v.enabled === "boolean") {
     // AppConfig omits attributes on a disabled flag; enabled without a valid

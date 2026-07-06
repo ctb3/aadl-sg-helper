@@ -35,12 +35,48 @@ export async function downscaleToLongestEdge(
     .toBuffer();
 }
 
+/** Crop to `bbox` (normalized, padded) and downscale to `maxEdge` in a single
+ * decode→encode pass. The old crop path (rotate-re-encode → extract-re-encode
+ * → downscale-re-encode) fully decoded the photo three times; on Lambda's
+ * ~1.2 vCPU that was a measurable slice of extract. Sources carrying EXIF
+ * rotation (never the app's client, which bakes orientation in) pay one
+ * normalize pass first so the bbox applies to the oriented pixel grid. */
+export async function cropAndDownscale(
+  buf: Buffer,
+  bbox: BBox,
+  paddingPct: number,
+  maxEdge: number,
+): Promise<Buffer> {
+  const m = await sharp(buf).metadata();
+  const src = (m.orientation ?? 1) === 1 ? buf : await sharp(buf).rotate().toBuffer();
+  const { width, height } = src === buf ? { width: m.width ?? 0, height: m.height ?? 0 } : await dims(src);
+  if (!width || !height) return downscaleToLongestEdge(src, maxEdge);
+
+  const px = padBboxToPixels(bbox, paddingPct, width, height);
+  return sharp(src)
+    .extract(px)
+    .resize(maxEdge, maxEdge, { fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+}
+
 /** Crop `buf` to `bbox` (normalized) expanded by paddingPct of the bbox size. */
 export async function cropWithPadding(buf: Buffer, bbox: BBox, paddingPct: number): Promise<Buffer> {
   const rotated = await sharp(buf).rotate().toBuffer();
   const { width, height } = await dims(rotated);
   if (!width || !height) return downscaleToLongestEdge(rotated, 1500);
 
+  const px = padBboxToPixels(bbox, paddingPct, width, height);
+  return sharp(rotated).extract(px).jpeg({ quality: 92 }).toBuffer();
+}
+
+/** Normalized padded bbox → a clamped sharp extract region. */
+function padBboxToPixels(
+  bbox: BBox,
+  paddingPct: number,
+  width: number,
+  height: number,
+): { left: number; top: number; width: number; height: number } {
   const x0 = Math.min(bbox.x0, bbox.x1);
   const x1 = Math.max(bbox.x0, bbox.x1);
   const y0 = Math.min(bbox.y0, bbox.y1);
@@ -58,11 +94,7 @@ export async function cropWithPadding(buf: Buffer, bbox: BBox, paddingPct: numbe
   const pxTop = Math.floor(top * height);
   const pxW = Math.max(1, Math.min(width - pxLeft, Math.ceil((right - left) * width)));
   const pxH = Math.max(1, Math.min(height - pxTop, Math.ceil((bottom - top) * height)));
-
-  return sharp(rotated)
-    .extract({ left: pxLeft, top: pxTop, width: pxW, height: pxH })
-    .jpeg({ quality: 92 })
-    .toBuffer();
+  return { left: pxLeft, top: pxTop, width: pxW, height: pxH };
 }
 
 function clamp01(v: number): number {

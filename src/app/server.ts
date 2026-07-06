@@ -164,35 +164,44 @@ async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
   const mode = await extractMode();
   const flagMs = Date.now() - t;
   if (mode === "off") throw new Error(EXTRACT_OFF_MSG);
-  // Transport is derived from the request shape, not a re-read of the flag, so
-  // it can't disagree with what the client actually did across a mid-session
-  // flip: an inline `photo` ⇒ store-images was OFF at session start; its
-  // absence ⇒ ON, and the photo was PUT to S3 (presigned).
+  // The photo rides inline for current clients regardless of store-images —
+  // the old presigned-PUT-then-server-GET transport moved the same bytes over
+  // the network twice, serially, before GCV could start. The client echoes its
+  // session's store-images verdict (`keep`) so a mid-session flag flip can't
+  // break the session's no-image-bytes-in-S3 promise. The S3 transport (no
+  // inline photo ⇒ the client PUT it presigned, which implies keeping it)
+  // remains for one release as the stale-client fallback.
   const inline = typeof body.photo === "string" && body.photo.length > 0;
-  const keep = !inline;
+  const keep = inline ? body.keep === true : true;
+  // Current clients also cut their own tier-2 crop from the local original
+  // (higher-res than any upload) — for them the server never auto-runs tier 2
+  // and omits the crop payload from the response.
+  const clientCrop = body.clientCrop === true;
   t = Date.now();
   const photo = inline
     ? decodeImage(body.photo, "photo")
     : await s3GetBuffer(sessionKey(sessionId, "photo.jpg"));
   const s3GetMs = inline ? 0 : Date.now() - t;
 
-  const { tier1, cropJpeg, normMs, cropMs } = await runTier1(photo);
-  // Persist the crop only when keeping images (it bridges extract→escalate);
-  // when OFF the client holds the crop (cropDataUrl) and hands it back.
-  t = Date.now();
-  if (keep) await s3Put(sessionKey(sessionId, "crop.jpg"), cropJpeg, "image/jpeg");
-  const s3PutCropMs = keep ? Date.now() - t : 0;
+  // Photo persistence overlaps GCV+crop instead of preceding the response.
+  const photoPut = inline && keep
+    ? s3Put(sessionKey(sessionId, "photo.jpg"), photo, "image/jpeg")
+    : null;
 
-  // Gate failure auto-escalates server-side: the user should never be shown a
-  // result the bake-off proved unreliable. Unless Claude is circuit-broken
-  // (mode gcv) — then the manual screen is the fallback and tier2 stays null.
+  const { tier1, cropJpeg, normMs, cropMs } = await runTier1(photo);
+
+  // Gate failure auto-escalates server-side for legacy clients only: current
+  // ones escalate with their own (better) crop. Claude circuit-broken (mode
+  // gcv) — the manual screen is the fallback and tier2 stays null.
   t = Date.now();
-  const tier2 = tier1.gatePassed || mode !== "full" ? null : await runTier2(cropJpeg);
+  const tier2 =
+    tier1.gatePassed || mode !== "full" || clientCrop ? null : await runTier2(cropJpeg);
   const tier2Ms = tier2 ? Date.now() - t : 0;
 
   // Per-step wall times for the speed work; gcvMs/tier2 latencyMs are the
-  // vendor calls alone, so overhead is attributable line by line. extract.json
-  // can't contain its own write time — the response's copy carries it.
+  // vendor calls alone, so overhead is attributable line by line. The tail S3
+  // writes run concurrently; extract.json can't contain its own write time —
+  // the response's copy carries s3TailMs/totalMs.
   const serverTimings: Record<string, number | boolean> = {
     coldStart,
     flagMs,
@@ -200,22 +209,28 @@ async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
     normMs,
     gcvMs: tier1.latencyMs,
     cropMs,
-    s3PutCropMs,
     tier2Ms,
   };
 
   t = Date.now();
-  await s3PutJson(sessionKey(sessionId, "extract.json"), {
-    at: new Date().toISOString(),
-    version: APP_VERSION,
-    storeImages: keep,
-    extractMode: mode,
-    photo: { ...(await dims(photo)), bytes: photo.length },
-    serverTimings,
-    tier1, // includes raw GCV words/geometry for later analysis
-    tier2,
-  });
-  serverTimings.s3PutJsonMs = Date.now() - t;
+  await Promise.all([
+    photoPut,
+    // The crop still bridges extract→escalate for legacy clients and feeds
+    // future labeling; escalate overwrites it with the client's original-res
+    // crop when one arrives.
+    keep ? s3Put(sessionKey(sessionId, "crop.jpg"), cropJpeg, "image/jpeg") : null,
+    s3PutJson(sessionKey(sessionId, "extract.json"), {
+      at: new Date().toISOString(),
+      version: APP_VERSION,
+      storeImages: keep,
+      extractMode: mode,
+      photo: { ...(await dims(photo)), bytes: photo.length },
+      serverTimings,
+      tier1, // includes raw GCV words/geometry for later analysis
+      tier2,
+    }),
+  ]);
+  serverTimings.s3TailMs = Date.now() - t;
   serverTimings.totalMs = Date.now() - t0;
 
   const { raw: _raw, ...tier1Public } = tier1;
@@ -224,7 +239,11 @@ async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
     tier2,
     extractMode: mode, // fresher than the session's copy if the flag flipped
     serverTimings,
-    cropDataUrl: `data:image/jpeg;base64,${cropJpeg.toString("base64")}`,
+    // ~200-400KB of base64 the current client no longer downloads: it shows
+    // and escalates with its locally-cut crop (tier1.bbox names the line).
+    ...(clientCrop
+      ? {}
+      : { cropDataUrl: `data:image/jpeg;base64,${cropJpeg.toString("base64")}` }),
   };
 }
 
@@ -241,13 +260,19 @@ async function handleEscalate(body: Record<string, unknown>): Promise<unknown> {
     ? decodeImage(body.crop, "crop")
     : await s3GetBuffer(sessionKey(sessionId, "crop.jpg"));
   const s3GetMs = inline ? 0 : Date.now() - t;
+  const keep = body.keep === true;
   t = Date.now();
   const tier2 = await runTier2(crop);
   const tier2Ms = Date.now() - t;
   const serverTimings: Record<string, number | boolean> = { coldStart, s3GetMs, claudeMs: tier2.latencyMs, tier2Ms };
   t = Date.now();
-  await s3PutJson(sessionKey(sessionId, "tier2.json"), { at: new Date().toISOString(), serverTimings, tier2 });
-  serverTimings.s3PutJsonMs = Date.now() - t;
+  await Promise.all([
+    // The client's inline crop is cut from its local original — a better
+    // labeling artifact than the extract-time server crop; keep it.
+    inline && keep ? s3Put(sessionKey(sessionId, "crop.jpg"), crop, "image/jpeg") : null,
+    s3PutJson(sessionKey(sessionId, "tier2.json"), { at: new Date().toISOString(), serverTimings, tier2 }),
+  ]);
+  serverTimings.s3TailMs = Date.now() - t;
   serverTimings.totalMs = Date.now() - t0;
   return { tier2, serverTimings };
 }

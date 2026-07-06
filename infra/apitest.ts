@@ -1,13 +1,15 @@
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
-import { downscaleToLongestEdge } from "../src/image";
+import { cropAndDownscale, downscaleToLongestEdge } from "../src/image";
 
 /**
  * Local smoke client for src/app/server.ts (run with `npx tsx infra/apitest.ts`
  * so it executes on Windows node — WSL curl cannot reach Windows localhost).
- * With --full, walks the real paid API: session -> presigned upload ->
- * extract -> escalate -> verdict, using the first photo in IMAGES_DIR.
+ * With --full, walks the real paid API the way the current client does:
+ * session -> extract (photo inline, keep echo, clientCrop) -> escalate with a
+ * locally-cut crop -> verdict, using the first photo in IMAGES_DIR; when
+ * store-images is ON it also smoke-tests the legacy presigned-PUT transport.
  * (A flag, not an env var: WSL env does not cross into Windows node.)
  */
 
@@ -88,39 +90,58 @@ async function main(): Promise<void> {
 
   const imgBytes = fs.readFileSync(path.join(dir, img));
 
-  // Transport mirrors the client: ON → presigned PUT then {sessionId}; OFF →
-  // the photo (and later the crop) ride inline, nothing is stored in S3.
-  let extractBody: Record<string, unknown>;
-  if (keep) {
-    const up = await fetch(s.json.uploadUrl, {
-      method: "PUT",
-      headers: { "content-type": "image/jpeg" },
-      body: imgBytes,
-    });
-    check("photo uploaded via presigned URL", up.ok, `status=${up.status}`);
-    extractBody = { sessionId: s.json.sessionId };
-  } else {
-    check("no presigned URL when store-images OFF", !s.json.uploadUrl);
-    // Mirror the client: downscale to the GCV input size so the inline base64
-    // payload stays under the ~6MB Function URL request cap (raw phone JPEGs
-    // exceed it). The real client does this in a Web Worker before posting.
-    const jpeg = await downscaleToLongestEdge(imgBytes, 2400);
-    extractBody = { sessionId: s.json.sessionId, photo: jpeg.toString("base64") };
-  }
+  // Transport mirrors the current client: the photo rides inline (downscaled
+  // to the GCV input size — raw phone JPEGs exceed the ~6MB Function URL
+  // request cap), with the session's store-images verdict echoed as `keep`
+  // and clientCrop announcing that we cut our own tier-2 crop.
+  const jpeg = await downscaleToLongestEdge(imgBytes, 2400, 70);
+  const extractBody = {
+    sessionId: s.json.sessionId,
+    photo: jpeg.toString("base64"),
+    keep,
+    clientCrop: true,
+  };
 
   const t0 = Date.now();
   const ex = await api("/api/extract", extractBody);
   check(
     "extract ran",
-    ex.status === 200 && typeof ex.json.tier1?.code === "string" && !!ex.json.cropDataUrl,
+    ex.status === 200 && typeof ex.json.tier1?.code === "string",
     `in ${Date.now() - t0}ms: tier1=${JSON.stringify({ ...ex.json.tier1, raw: undefined })} tier2=${JSON.stringify(ex.json.tier2)}`,
   );
+  check("no crop payload for clientCrop", ex.json.cropDataUrl === undefined);
+  check("no server auto-tier2 for clientCrop", ex.json.tier2 === null);
+  check("bbox present", "bbox" in (ex.json.tier1 ?? {}), `bbox=${JSON.stringify(ex.json.tier1?.bbox)}`);
 
+  if (keep) {
+    // Legacy transport (stale clients, one release): presigned PUT + bare
+    // sessionId ⇒ the server reads photo.jpg back from S3 and auto-runs what
+    // it needs. Reuses the session; extract.json is overwritten — smoke only.
+    const up = await fetch(s.json.uploadUrl, {
+      method: "PUT",
+      headers: { "content-type": "image/jpeg" },
+      body: imgBytes,
+    });
+    check("legacy presigned PUT works", up.ok, `status=${up.status}`);
+    const exL = await api("/api/extract", { sessionId: s.json.sessionId });
+    check(
+      "legacy S3 transport extract works",
+      exL.status === 200 && typeof exL.json.tier1?.code === "string" && !!exL.json.cropDataUrl,
+      `tier1.code=${exL.json.tier1?.code}`,
+    );
+  }
+
+  // Escalate with a locally-cut crop from the original, like the client.
+  const bbox = ex.json.tier1?.bbox ?? null;
+  const cropJpeg = bbox
+    ? await cropAndDownscale(imgBytes, bbox, 0.6, 1500)
+    : await downscaleToLongestEdge(imgBytes, 1500);
   const t1 = Date.now();
-  const esc = await api(
-    "/api/escalate",
-    keep ? { sessionId: s.json.sessionId } : { sessionId: s.json.sessionId, crop: ex.json.cropDataUrl },
-  );
+  const esc = await api("/api/escalate", {
+    sessionId: s.json.sessionId,
+    crop: cropJpeg.toString("base64"),
+    keep,
+  });
   if (mode === "gcv") {
     // Claude circuit-broken: extract never auto-escalates, escalate refuses.
     check("no tier 2 while gcv-only", ex.json.tier2 === null);

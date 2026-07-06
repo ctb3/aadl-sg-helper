@@ -71,8 +71,16 @@ aadl.org for every connected account/player (or the ?text= handoff link when
 none is connected). Rejected submits offer/auto-run tier-2 escalation
 (submit.json logs each attempt per session, cookie-free; verdict.json and
 submit.json stay separate so extraction accuracy and submission health are
-independently attributable). Client uploads full-res JPEG straight to S3 via presigned PUT
-(dodges the 6MB Function URL cap, keeps tier-2 crops high-res); every session
+independently attributable). Transport (v0.5 speed push): the client posts a
+2400px q0.7 JPEG INLINE in /api/extract (one network pass; GCV starts on
+arrival; server persists photo.jpg overlapped with GCV when store-images is
+on — client echoes the session's verdict as `keep`). Tier-2 crops are cut by
+the CLIENT from its local ORIGINAL photo at the bbox extract returns
+(client sends `clientCrop:true`; server then skips auto-tier2, omits the
+cropDataUrl payload, and gate-fail auto-escalation is the client calling
+/api/escalate with its crop — 95.2% vs 92.1% from upload-res crops, n=63).
+The old presigned-PUT + server-S3-GET transport survives one release for
+stale clients (handleSession still signs an uploadUrl). Every kept session
 logs photo/crop/results/verdicts under s3://aadl-sg-sessions-…/sessions/ for
 future labeling. Access gate = APP_PIN (.env) checked server-side.
 Image storage is behind the `store-images` AppConfig feature flag (runtime,
@@ -83,9 +91,10 @@ entry; disabled → no reading at all — client skips upload+extract and shows 
 sorry note over manual entry; submission keeps working). One flag, not two,
 because Claude-without-GCV is invalid (tier 2 needs GCV's line crop). Env
 fallback EXTRACT_MODE=full|gcv|off; flag flips replace the WHOLE hosted
-document — include every flag (see infra/README.md). When OFF the transport forks: the client posts the photo inline (and the
-crop back on escalate) so NO image bytes ever hit S3 — only the telemetry JSON
-is kept, so accuracy/speed reporting is unaffected. `sessions-report.ts
+document — include every flag (see infra/README.md). Store-images OFF no
+longer changes the transport (always inline) — the server just never writes
+photo/crop bytes to S3 (`keep:false`); only the telemetry JSON is kept, so
+accuracy/speed reporting is unaffected. `sessions-report.ts
 --summary` is the cross-version rollup (per version: seen, tier1/tier2 correct
 rates, gate%, per-step avg·p99); the default (no flag / a prefix arg) stays the
 single-version detail view. Telemetry lives in the per-session JSON (durable
@@ -152,6 +161,25 @@ manual prefilled** = 97.4% end-to-end, <$0.003/img avg, 87% instant (0.4s).
 - Prompt-hardening that worked (in-sample): doodles-aren't-letters, ignore
   ghost strokes of cleaned-off codes, resolve ambiguous glyphs by the writer's
   own letterforms. Caveat everywhere: n=39, thresholds tuned while looking.
+
+Speed push (2026-07-06, n=63 incl. harder field photos — gate t=0.5 now
+89% cov · 89-91% precision; tier-2-on-crop 95.2%):
+
+- GCV input: resolution matters (bbox/line choice degrades below 2400 —
+  tier-2-from-original drops 95.2→90.5% with 1600px bboxes), JPEG quality
+  does NOT (q60-70 ≈ q90 accuracy at half the bytes). Ship 2400px q0.7.
+- Tier-2 must crop from a high-res source: 95.2% from the original photo
+  (all 3 misses = wrong-line localization, zero transcription errors) vs
+  92.1% from a q70 2400px upload. Hence client-side cropping.
+- Haiku 4.5 on crops: 66.7%, glyph confusions everywhere, and barely faster
+  than Sonnet 4.6 (fresh p50 1604 vs 2167ms). Not a lever. Sonnet 5 was not
+  enabled in either account when tested (Bedrock Marketplace).
+- Dropping per_char_confidence from the reader JSON contract: identical
+  accuracy, fresh p50 2167→1657ms (−24%) — output tokens were the latency.
+- Speculative tier-2 (pre-warm on marginal conf) judged not worth it: user
+  rejects of a gate-passed tier-1 are rare in the field (≈1 in 90 sessions).
+- Harness latency numbers: cache replays report the ORIGINAL call's latency —
+  only `cached=false` rows (report.md "fresh" columns) measure this run.
 
 ## Environment (WSL + Windows)
 

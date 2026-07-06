@@ -232,6 +232,12 @@ resource "aws_iam_role_policy" "ci" {
           "appconfig:StartDeployment",
           "appconfig:GetDeployment",
           "appconfig:StopDeployment",
+          # The custom aadl-sg-flip strategy (appconfig.tf) — omitting Get
+          # broke CI's refresh with AccessDenied once the strategy existed.
+          "appconfig:CreateDeploymentStrategy",
+          "appconfig:GetDeploymentStrategy",
+          "appconfig:UpdateDeploymentStrategy",
+          "appconfig:DeleteDeploymentStrategy",
           "appconfig:TagResource",
           "appconfig:UntagResource",
           "appconfig:ListTagsForResource",

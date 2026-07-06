@@ -33,7 +33,7 @@ function check(name: string, ok: boolean, detail = ""): void {
 
 async function main(): Promise<void> {
   const page = await fetch(BASE + "/");
-  check("GET / serves page", page.status === 200 && (await page.text()).includes("SG Code Helper"));
+  check("GET / serves page", page.status === 200 && (await page.text()).includes("AADL Summer Game Code Helper"));
 
   const noPin = await api("/api/session", {}, "wrong-pin");
   check("wrong PIN rejected", noPin.status === 401, `status=${noPin.status}`);

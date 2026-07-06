@@ -26,7 +26,10 @@ export function modelTag(reader: ReaderName, arm: Arm): string {
   let tag = "";
   if (reader === "claude") tag += "__" + sanitize(config.claudeModel) + "__p" + promptHash;
   if (reader === "nova") tag += "__" + sanitize(config.novaModel) + "__p" + promptHash;
-  if (reader === "gcv") tag += "__e" + config.gcvMaxEdge; // input resolution
+  if (reader === "gcv") {
+    tag += "__e" + config.gcvMaxEdge; // input resolution
+    if (config.gcvQuality !== 90) tag += "__q" + config.gcvQuality; // input JPEG quality
+  }
   if (arm === "model_crop") tag += "__loc-" + sanitize(config.localizerModel);
   return tag;
 }

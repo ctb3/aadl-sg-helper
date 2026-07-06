@@ -62,12 +62,18 @@ function ensureDir(p: string): void {
   fs.mkdirSync(p, { recursive: true });
 }
 
-async function getPrepped(gt: GroundTruth, orig: Buffer, edge = config.maxEdge): Promise<Buffer> {
+async function getPrepped(
+  gt: GroundTruth,
+  orig: Buffer,
+  edge = config.maxEdge,
+  quality = 90,
+): Promise<Buffer> {
   ensureDir(config.preppedDir);
-  const suffix = edge === config.maxEdge ? "" : `.e${edge}`;
+  const suffix =
+    (edge === config.maxEdge ? "" : `.e${edge}`) + (quality === 90 ? "" : `.q${quality}`);
   const p = path.join(config.preppedDir, sanitize(gt.filename) + suffix + ".jpg");
   if (fs.existsSync(p)) return fs.readFileSync(p);
-  const buf = await downscaleToLongestEdge(orig, edge);
+  const buf = await downscaleToLongestEdge(orig, edge, quality);
   fs.writeFileSync(p, buf);
   return buf;
 }
@@ -196,7 +202,7 @@ async function main(): Promise<void> {
       for (const reader of args.readers) {
         const image =
           arm !== "none" ? crop!
-          : reader === "gcv" ? await getPrepped(gt, orig, config.gcvMaxEdge)
+          : reader === "gcv" ? await getPrepped(gt, orig, config.gcvMaxEdge, config.gcvQuality)
           : prepped;
         const res = await cachedRead(gt, reader, arm, image, args.force);
         const rec = buildRecord(gt, reader, arm, res);

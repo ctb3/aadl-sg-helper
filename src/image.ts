@@ -20,12 +20,18 @@ export async function fitsAsIs(buf: Buffer, maxEdge: number): Promise<boolean> {
   return w > 0 && h > 0 && Math.max(w, h) <= maxEdge && (m.orientation ?? 1) === 1;
 }
 
-/** Downscale so the longest edge is <= maxEdge, re-encode as JPEG. */
-export async function downscaleToLongestEdge(buf: Buffer, maxEdge: number): Promise<Buffer> {
+/** Downscale so the longest edge is <= maxEdge, re-encode as JPEG.
+ * `quality` exists for the upload-bytes ladder (the field client encodes at
+ * its own quality; the harness sweeps this to find GCV's floor). */
+export async function downscaleToLongestEdge(
+  buf: Buffer,
+  maxEdge: number,
+  quality = 90,
+): Promise<Buffer> {
   return sharp(buf)
     .rotate() // respect EXIF orientation
     .resize(maxEdge, maxEdge, { fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 90 })
+    .jpeg({ quality })
     .toBuffer();
 }
 

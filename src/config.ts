@@ -37,6 +37,8 @@ export const config = {
   // GCV bills per image regardless of size, and its glyph reading is the
   // resolution-bound step — so it gets its own (higher) downscale target.
   gcvMaxEdge: num("GCV_MAX_EDGE", 2400),
+  // JPEG quality of the harness's GCV input (upload-bytes ladder; 90 = classic).
+  gcvQuality: num("GCV_QUALITY", 90),
   cropPaddingPct: num("CROP_PADDING_PCT", 0.15),
 
   gcvBand: {

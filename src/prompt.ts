@@ -33,9 +33,12 @@ export const READER_USER =
   "which reading makes a nicer word. Pick your single best LITERAL reading " +
   "for `code`, and list other plausible literal readings of the FULL code in " +
   "`alternatives`.\n" +
+  // per_char_confidence was dropped from the contract 2026-07-06: nothing
+  // consumed it (the shipped gate uses GCV confidences) and latency scales
+  // with output tokens — same accuracy, ~15% faster (see speed-push runs).
+  // parseTranscription still accepts it, so old caches stay readable.
   "Return ONLY strict JSON, no prose and no markdown fences:\n" +
-  '{"code": "<string>", "per_char_confidence": [<0..1 for each character>], ' +
-  '"alternatives": ["<full-code alternative>", ...]}';
+  '{"code": "<string>", "alternatives": ["<full-code alternative>", ...]}';
 
 export interface Transcription {
   code: string;
@@ -43,18 +46,29 @@ export interface Transcription {
   alternatives?: string[];
 }
 
-/** Pull the first JSON object out of an LLM response, tolerating fences/prose. */
+/** Pull the first JSON object out of an LLM response, tolerating fences/prose.
+ * "First" is load-bearing: models occasionally emit the object twice (or trail
+ * prose), and a first-{ .. last-} slice spans the duplicates and fails to
+ * parse — so walk to the first BALANCED closing brace instead. */
 export function extractJsonObject(text: string): unknown {
   let t = text.trim();
   // strip ```json ... ``` fences if present
   const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) t = fence[1].trim();
   const start = t.indexOf("{");
-  const end = t.lastIndexOf("}");
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error(`no JSON object in response: ${text.slice(0, 200)}`);
+  if (start === -1) throw new Error(`no JSON object in response: ${text.slice(0, 200)}`);
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < t.length; i++) {
+    const c = t[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return JSON.parse(t.slice(start, i + 1));
   }
-  return JSON.parse(t.slice(start, end + 1));
+  throw new Error(`no JSON object in response: ${text.slice(0, 200)}`);
 }
 
 export function parseTranscription(text: string): Transcription {

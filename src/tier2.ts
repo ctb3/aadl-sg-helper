@@ -52,15 +52,20 @@ function readLabels(): GroundTruth[] {
 }
 
 const fromPrepped = process.argv.includes("--from-prepped");
-const srcTag = fromPrepped ? `e${config.gcvMaxEdge}src` : "";
+const qTag = config.gcvQuality === 90 ? "" : `q${config.gcvQuality}`;
+const srcTag = fromPrepped ? `e${config.gcvMaxEdge}${qTag}src` : "";
 
 /** The GCV_MAX_EDGE downscale, cached exactly where run.ts's getPrepped puts it. */
 async function getPrepped2400(filename: string): Promise<Buffer> {
   fs.mkdirSync(config.preppedDir, { recursive: true });
-  const p = path.join(config.preppedDir, `${sanitize(filename)}.e${config.gcvMaxEdge}.jpg`);
+  const qSuffix = config.gcvQuality === 90 ? "" : `.q${config.gcvQuality}`;
+  const p = path.join(
+    config.preppedDir,
+    `${sanitize(filename)}.e${config.gcvMaxEdge}${qSuffix}.jpg`,
+  );
   if (fs.existsSync(p)) return fs.readFileSync(p);
   const orig = fs.readFileSync(path.join(config.imagesDir, filename));
-  const buf = await downscaleToLongestEdge(orig, config.gcvMaxEdge);
+  const buf = await downscaleToLongestEdge(orig, config.gcvMaxEdge, config.gcvQuality);
   fs.writeFileSync(p, buf);
   return buf;
 }
@@ -111,7 +116,19 @@ async function main(): Promise<void> {
         // GCV found no candidate line — tier 2 falls back to the full photo.
         image = await downscaleToLongestEdge(src, config.maxEdge);
       }
-      result = await claudeReader.read(image, "none");
+      // Same contract as run.ts's cachedRead: a flaky response (e.g. prose
+      // around the JSON) scores as an error row and retries next run — it
+      // must not abort the remaining images.
+      try {
+        result = await claudeReader.read(image, "none");
+      } catch (err) {
+        result = {
+          code: "",
+          rawResponse: null,
+          latencyMs: 0,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
       result.usedGcvLine = !!line;
       if (!result.error) fs.writeFileSync(cachePath, JSON.stringify(result, null, 2));
     }

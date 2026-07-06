@@ -8,7 +8,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { config } from "../config";
 import { dims } from "../image";
 import { AuthExpiredError, connect, loadJar, submitCode } from "./aadl";
-import { storeImages } from "./flags";
+import { extractMode, storeImages } from "./flags";
 import { runTier1, runTier2 } from "./pipeline";
 
 /**
@@ -119,9 +119,11 @@ function requireSessionId(body: Record<string, unknown>): string {
 
 async function handleSession(): Promise<unknown> {
   const sessionId = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
-  const keep = await storeImages();
+  const [keep, mode] = await Promise.all([storeImages(), extractMode()]);
   // The presigned PUT (S3 transport) is issued only when we intend to keep the
   // photo. When OFF the client posts it inline instead — nothing hits S3.
+  // Still issued when extract-mode is off (presigning is a free local
+  // signature, and a stale pre-flag client would break without it).
   const uploadUrl = keep
     ? await getSignedUrl(
         s3,
@@ -133,11 +135,22 @@ async function handleSession(): Promise<unknown> {
         { expiresIn: 600 },
       )
     : undefined;
-  return { sessionId, storeImages: keep, uploadUrl };
+  return { sessionId, storeImages: keep, extractMode: mode, uploadUrl };
 }
+
+// User-facing "sorry" messages for the extract-mode circuit breaker; the
+// request handler maps them to 503 and the client shows them verbatim. The
+// client normally never calls a disabled endpoint (it acts on the session's
+// extractMode), so these guard stale clients and mid-session flips.
+const EXTRACT_OFF_MSG =
+  "Sorry — automatic code reading is switched off right now. You can still type the code by hand.";
+const ESCALATE_OFF_MSG =
+  "Sorry — the closer-look reader is switched off right now. Check the code by hand instead.";
 
 async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
   const sessionId = requireSessionId(body);
+  const mode = await extractMode();
+  if (mode === "off") throw new Error(EXTRACT_OFF_MSG);
   // Transport is derived from the request shape, not a re-read of the flag, so
   // it can't disagree with what the client actually did across a mid-session
   // flip: an inline `photo` ⇒ store-images was OFF at session start; its
@@ -154,13 +167,15 @@ async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
   if (keep) await s3Put(sessionKey(sessionId, "crop.jpg"), cropJpeg, "image/jpeg");
 
   // Gate failure auto-escalates server-side: the user should never be shown a
-  // result the bake-off proved unreliable.
-  const tier2 = tier1.gatePassed ? null : await runTier2(cropJpeg);
+  // result the bake-off proved unreliable. Unless Claude is circuit-broken
+  // (mode gcv) — then the manual screen is the fallback and tier2 stays null.
+  const tier2 = tier1.gatePassed || mode !== "full" ? null : await runTier2(cropJpeg);
 
   await s3PutJson(sessionKey(sessionId, "extract.json"), {
     at: new Date().toISOString(),
     version: APP_VERSION,
     storeImages: keep,
+    extractMode: mode,
     photo: { ...(await dims(photo)), bytes: photo.length },
     tier1, // includes raw GCV words/geometry for later analysis
     tier2,
@@ -170,12 +185,14 @@ async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
   return {
     tier1: tier1Public,
     tier2,
+    extractMode: mode, // fresher than the session's copy if the flag flipped
     cropDataUrl: `data:image/jpeg;base64,${cropJpeg.toString("base64")}`,
   };
 }
 
 async function handleEscalate(body: Record<string, unknown>): Promise<unknown> {
   const sessionId = requireSessionId(body);
+  if ((await extractMode()) !== "full") throw new Error(ESCALATE_OFF_MSG);
   // Inline `crop` ⇒ OFF (client hands back the crop it holds); its absence ⇒
   // re-read the stored crop from S3. Mirrors the extract transport, race-free.
   const crop = typeof body.crop === "string" && body.crop
@@ -321,6 +338,8 @@ const server = http.createServer(async (req, res) => {
     const msg = String(err?.message ?? err);
     if (err?.name === "NoSuchKey") {
       send(res, 404, { error: "session object not found (upload the photo first?)" });
+    } else if (msg === EXTRACT_OFF_MSG || msg === ESCALATE_OFF_MSG) {
+      send(res, 503, { error: msg });
     } else if (
       msg.startsWith("bad ") || msg === "body too large" ||
       msg === "username and password required" || msg.startsWith("accounts must be") ||

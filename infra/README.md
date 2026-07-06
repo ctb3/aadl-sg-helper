@@ -105,17 +105,37 @@ Each account is independent, so test and prod toggle separately.
   OFF, images never touch S3 (the client posts them inline; the server keeps
   only the telemetry JSON) — so accuracy/speed reporting is unaffected either
   way. See `src/app/sessions-report.ts --summary` for the cross-version rollup.
+- **`extract-mode`** (default enabled, `mode=full`): the reader cost circuit
+  breaker. One flag, not two booleans, because Claude-without-GCV is not a
+  valid state (tier 2 reads GCV's chosen-line crop).
+  - enabled + `mode=full` — normal: GCV tier 1, Claude tier-2 escalation.
+  - enabled + `mode=gcv` — Claude off: gate failures, "Try harder", and
+    AADL-rejected reads all land on the manual screen with the tier-1 read
+    prefilled. Use this if GCV alone proves good enough.
+  - **disabled** — reading fully off: the client skips upload+extract after
+    the photo (nothing billable) and shows a "sorry, reading is switched off"
+    note over manual entry (their own photo displayed for reference);
+    account submission and the aadl.org handoff keep working.
+  - Env fallback `EXTRACT_MODE` (local dev / AppConfig unreachable / flag
+    absent): defaults to `full`.
 
 Flips deploy with the custom **`aadl-sg-flip`** strategy (100% at once, zero
 bake) — instant and immediately re-flippable, unlike `AppConfig.AllAtOnce`'s
 10-minute bake window that locks the environment between flips.
 
 **Flip it — console (simplest):** AppConfig → Applications → `aadl-sg` →
-Configuration profiles → `flags` → edit the `store-images` value (enabled
-on/off) → save a new version → **Start deployment** to the env with the
-`aadl-sg-flip` strategy.
+Configuration profiles → `flags` → edit the flag's value (enabled on/off,
+`mode` attribute for `extract-mode`) → save a new version → **Start
+deployment** to the env with the `aadl-sg-flip` strategy.
 
 **Flip it — CLI:**
+
+> A hosted configuration version replaces the **whole document** — always
+> include *every* flag (a flag you omit vanishes and the app falls back to its
+> env default). Corollary of the seed's `ignore_changes`: flags added to
+> `appconfig.tf` later never reach an already-deployed stack via `apply`; they
+> materialize with the first out-of-band flip like this one (until then the
+> absent flag fails open to its env default).
 
 ```bash
 export AWS_PROFILE=aadl-sg-prod-admin   # or aadl-sg-test-admin
@@ -123,8 +143,18 @@ APP=$(aws appconfig list-applications --query "Items[?Name=='aadl-sg'].Id" --out
 ENV=$(aws appconfig list-environments --application-id "$APP" --query "Items[0].Id" --output text)
 PROF=$(aws appconfig list-configuration-profiles --application-id "$APP" --query "Items[?Name=='flags'].Id" --output text)
 STRAT=$(aws appconfig list-deployment-strategies --query "Items[?Name=='aadl-sg-flip'].Id" --output text)
-# New version with the flag OFF (enabled:true to turn it back on):
-printf '%s' '{"version":"1","flags":{"store-images":{"name":"store-images"}},"values":{"store-images":{"enabled":false}}}' > /tmp/flag.json
+# The full document — edit the values you want to flip:
+#   store-images enabled:false        → stop persisting images
+#   extract-mode mode:"gcv"           → Claude off, GCV only
+#   extract-mode enabled:false        → no automatic reading at all
+cat > /tmp/flag.json <<'EOF'
+{"version":"1",
+ "flags":{"store-images":{"name":"store-images"},
+          "extract-mode":{"name":"extract-mode",
+            "attributes":{"mode":{"constraints":{"type":"string","enum":["full","gcv"]}}}}},
+ "values":{"store-images":{"enabled":true},
+           "extract-mode":{"enabled":true,"mode":"full"}}}
+EOF
 VER=$(aws appconfig create-hosted-configuration-version --application-id "$APP" \
   --configuration-profile-id "$PROF" --content-type application/json \
   --content fileb:///tmp/flag.json --query VersionNumber --output text /tmp/appconfig-ver.json)

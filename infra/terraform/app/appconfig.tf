@@ -34,13 +34,27 @@ resource "aws_appconfig_hosted_configuration_version" "flags" {
         name        = "store-images"
         description = "Persist the session photo/crop to S3. Telemetry JSON is kept regardless."
       }
+      "extract-mode" = {
+        name        = "extract-mode"
+        description = "Reader cost circuit breaker: mode=full → GCV+Claude, mode=gcv → GCV only, disabled → no automatic reading (manual entry still works)."
+        attributes = {
+          mode = {
+            constraints = { type = "string", enum = ["full", "gcv"] }
+          }
+        }
+      }
     }
     values = {
       "store-images" = { enabled = true }
+      "extract-mode" = { enabled = true, mode = "full" }
     }
   })
 
   # Flips create new versions out-of-band; don't let `apply` revert them.
+  # Corollary: flags added here later do NOT reach already-deployed stacks —
+  # absent flags fail open to their env defaults (correct), and the new flag
+  # materializes with the first out-of-band flip (a hosted version is always
+  # the whole document).
   lifecycle {
     ignore_changes = [content]
   }
@@ -66,7 +80,7 @@ resource "aws_appconfig_deployment" "flags" {
   configuration_profile_id = aws_appconfig_configuration_profile.flags.configuration_profile_id
   configuration_version    = aws_appconfig_hosted_configuration_version.flags.version_number
   deployment_strategy_id   = aws_appconfig_deployment_strategy.flip.id
-  description              = "Seed deployment (store-images ON). Later flips deploy out-of-band."
+  description              = "Seed deployment (store-images ON, extract-mode full). Later flips deploy out-of-band."
 
   # Out-of-band flips deploy newer versions; keep TF from redeploying the seed.
   lifecycle {

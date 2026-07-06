@@ -76,6 +76,8 @@ export const config = {
   // Local/fail-open override for the store-images flag when AppConfig is
   // unreachable (no env configured, no perms): keeps today's "always store".
   storeImagesDefault: str("STORE_IMAGES", "on"),
+  // Same fail-open override for the extract-mode flag: full | gcv | off.
+  extractModeDefault: str("EXTRACT_MODE", "full"),
   // How long a fetched flag value is trusted before the next AppConfig poll.
   flagCacheTtlMs: num("FLAG_CACHE_TTL_MS", 60000),
 } as const;

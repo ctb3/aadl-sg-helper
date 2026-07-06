@@ -25,7 +25,7 @@ import { config } from "../config";
 const client = new AppConfigDataClient({ region: config.awsRegion });
 
 let token: string | undefined; // rotating poll token (per process)
-let cached: Record<string, { enabled?: boolean } | undefined> = {};
+let cached: Record<string, { enabled?: boolean; [attr: string]: unknown } | undefined> = {};
 let fetchedAt = 0;
 let inflight: Promise<void> | null = null;
 
@@ -88,3 +88,30 @@ export async function flag(name: string, envDefault: string): Promise<boolean> {
 
 /** Whether session images (photo/crop) should be persisted to S3. */
 export const storeImages = (): Promise<boolean> => flag("store-images", config.storeImagesDefault);
+
+/**
+ * Which extraction tiers may run — the reader-cost circuit breaker:
+ *   full — GCV tier 1 + Claude tier-2 escalation (normal operation)
+ *   gcv  — GCV only; every would-be Claude call lands on manual entry instead
+ *   off  — no automatic reading at all; manual entry + submission still work
+ * Modeled as one flag (`enabled` = the big red switch, `mode` attribute picks
+ * tiers) because Claude-without-GCV is not a valid state: tier 2 reads GCV's
+ * chosen-line crop, and full-photo Claude fails on small-in-frame signs.
+ */
+export type ExtractMode = "full" | "gcv" | "off";
+
+const parseMode = (v: unknown): ExtractMode | null =>
+  v === "full" || v === "gcv" || v === "off" ? v : null;
+
+export async function extractMode(): Promise<ExtractMode> {
+  const envDefault = parseMode(config.extractModeDefault.trim().toLowerCase()) ?? "full";
+  if (!configured()) return envDefault;
+  await refresh();
+  const v = cached?.["extract-mode"];
+  if (v && typeof v.enabled === "boolean") {
+    // AppConfig omits attributes on a disabled flag; enabled without a valid
+    // mode (attribute deleted in the console) fails open to full.
+    return v.enabled ? parseMode(v.mode) ?? "full" : "off";
+  }
+  return envDefault;
+}

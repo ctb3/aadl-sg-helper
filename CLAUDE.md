@@ -77,7 +77,13 @@ logs photo/crop/results/verdicts under s3://aadl-sg-sessions-…/sessions/ for
 future labeling. Access gate = APP_PIN (.env) checked server-side.
 Image storage is behind the `store-images` AppConfig feature flag (runtime,
 per-account, flip without redeploy — src/app/flags.ts, infra/README.md; default
-ON). When OFF the transport forks: the client posts the photo inline (and the
+ON). Reader cost circuit breaker: the `extract-mode` flag (enabled+mode=full →
+GCV+Claude; mode=gcv → GCV only, every would-be Claude call lands on manual
+entry; disabled → no reading at all — client skips upload+extract and shows a
+sorry note over manual entry; submission keeps working). One flag, not two,
+because Claude-without-GCV is invalid (tier 2 needs GCV's line crop). Env
+fallback EXTRACT_MODE=full|gcv|off; flag flips replace the WHOLE hosted
+document — include every flag (see infra/README.md). When OFF the transport forks: the client posts the photo inline (and the
 crop back on escalate) so NO image bytes ever hit S3 — only the telemetry JSON
 is kept, so accuracy/speed reporting is unaffected. `sessions-report.ts
 --summary` is the cross-version rollup (per version: seen, tier1/tier2 correct

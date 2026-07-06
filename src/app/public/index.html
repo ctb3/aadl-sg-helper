@@ -570,6 +570,18 @@ async function onPhoto(file) {
     pendingSession = null;
     state.sessionId = s.sessionId;
     state.storeImages = s.storeImages !== false; // default to keeping if unset
+    state.extractMode = s.extractMode || "full"; // pre-flag server ⇒ full
+
+    if (state.extractMode === "off") {
+      // Reading is circuit-broken: no upload, no extract — nothing billable.
+      // Their own photo stands in for the crop so they can copy the code off
+      // the screen, and submission (accounts or handoff) still works.
+      state.tier1 = { code: "" };
+      state.tier2 = null;
+      state.cropDataUrl = "data:image/jpeg;base64," + (await blobToB64(jpeg.blob));
+      state.verdicts.push({ tier: 0, code: "", action: "extract_off" });
+      return showManual("Sorry — automatic code reading is switched off right now. Type the code from the sign:");
+    }
 
     let extractBody;
     if (state.storeImages) {
@@ -597,6 +609,7 @@ async function onPhoto(file) {
     state.tier1 = res.tier1;
     state.tier2 = res.tier2;
     state.cropDataUrl = res.cropDataUrl;
+    state.extractMode = res.extractMode || state.extractMode; // fresher on a mid-flight flip
 
     if (res.tier1.gatePassed && validCode(res.tier1.code)) {
       if (autoMode()) {
@@ -613,14 +626,16 @@ async function onPhoto(file) {
       tier: 1, code: res.tier1.code, minConf: res.tier1.minConf,
       action: res.tier1.gatePassed ? "auto_skipped_toolong" : "auto_skipped_gate",
     });
-    if (!state.tier2) {
+    // With Claude circuit-broken (mode gcv) tier 2 never runs — the manual
+    // screen with the tier-1 read prefilled is the fallback.
+    if (!state.tier2 && state.extractMode === "full") {
       show("v-busy", "Asking Claude for a closer look…");
       t = Date.now();
       const r = await api("/api/escalate", escalateBody());
       state.timings.escalateMs = Date.now() - t;
       state.tier2 = r.tier2;
     }
-    const code2 = norm(state.tier2.code);
+    const code2 = state.tier2 ? norm(state.tier2.code) : "";
     if (autoMode()) {
       if (validCode(code2)) {
         state.presented = { tier: 2, code: code2 };
@@ -638,6 +653,8 @@ async function onPhoto(file) {
 async function reject() {
   const { tier, code } = state.presented;
   state.verdicts.push({ tier, code, action: "rejected" });
+  // Claude circuit-broken: "trying harder" means the human fixes it by hand.
+  if (state.extractMode !== "full") return showManual();
   try {
     show("v-busy", "Asking Claude for a closer look…");
     const t = Date.now();
@@ -734,7 +751,7 @@ async function submitToAadl(code) {
   // tier 2 has had its shot, the manual fallback is all that's left.
   const rejected = res.results.some((r) => r.outcome === "not_recognized" || r.outcome === "close_match");
   const ocrCode = state.presented && !state.verdicts.some((v) => v.action === "manual_entry");
-  if (rejected && ocrCode && !state.tier2 && !state.autoEscalated) {
+  if (rejected && ocrCode && !state.tier2 && !state.autoEscalated && state.extractMode === "full") {
     state.autoEscalated = true;
     state.verdicts.push({ tier: state.presented.tier, code, action: "aadl_rejected" });
     show("v-busy", "AADL didn't recognize it, asking Claude…");

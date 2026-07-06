@@ -42,10 +42,12 @@ async function main(): Promise<void> {
   const s = await api("/api/session");
   // store-images ON → presigned uploadUrl present; OFF → absent (inline transport).
   const keep = s.json.storeImages !== false;
+  // Reader circuit breaker: full | gcv | off (drives the --full assertions).
+  const mode = s.json.extractMode ?? "full";
   check(
     "session created",
     s.status === 200 && (keep ? !!s.json.uploadUrl : !s.json.uploadUrl),
-    `id=${s.json.sessionId} storeImages=${keep}`,
+    `id=${s.json.sessionId} storeImages=${keep} extractMode=${mode}`,
   );
   if (s.status !== 200) return;
 
@@ -60,6 +62,22 @@ async function main(): Promise<void> {
 
   if (!process.argv.includes("--full")) {
     console.log("(pass --full to run the paid upload/extract/escalate path)");
+    return;
+  }
+
+  // Reading fully off: extract must refuse with the user-facing 503; the
+  // verdict endpoint (telemetry) keeps working. No photo needed.
+  if (mode === "off") {
+    const ex = await api("/api/extract", { sessionId: s.json.sessionId });
+    check("extract refused while off", ex.status === 503 && !!ex.json.error, `status=${ex.status}: ${ex.json.error}`);
+    const esc = await api("/api/escalate", { sessionId: s.json.sessionId });
+    check("escalate refused while off", esc.status === 503, `status=${esc.status}`);
+    const v = await api("/api/verdict", {
+      sessionId: s.json.sessionId,
+      record: { verdicts: [{ tier: 0, code: "", action: "extract_off" }], finalCode: "APITEST", source: "manual" },
+    });
+    check("verdict stored", v.status === 200 && v.json.ok === true);
+    console.log(`session: ${s.json.sessionId}`);
     return;
   }
 
@@ -103,15 +121,22 @@ async function main(): Promise<void> {
     "/api/escalate",
     keep ? { sessionId: s.json.sessionId } : { sessionId: s.json.sessionId, crop: ex.json.cropDataUrl },
   );
-  check(
-    "escalate ran (Claude on crop)",
-    esc.status === 200 && typeof esc.json.tier2?.code === "string",
-    `in ${Date.now() - t1}ms: ${JSON.stringify(esc.json.tier2)}`,
-  );
+  if (mode === "gcv") {
+    // Claude circuit-broken: extract never auto-escalates, escalate refuses.
+    check("no tier 2 while gcv-only", ex.json.tier2 === null);
+    check("escalate refused while gcv-only", esc.status === 503, `status=${esc.status}`);
+  } else {
+    check(
+      "escalate ran (Claude on crop)",
+      esc.status === 200 && typeof esc.json.tier2?.code === "string",
+      `in ${Date.now() - t1}ms: ${JSON.stringify(esc.json.tier2)}`,
+    );
+  }
 
+  const finalCode = esc.json.tier2?.code ?? ex.json.tier1?.code;
   const v = await api("/api/verdict", {
     sessionId: s.json.sessionId,
-    record: { verdicts: [{ tier: 2, code: esc.json.tier2?.code, action: "approved" }], finalCode: esc.json.tier2?.code, source: "tier2" },
+    record: { verdicts: [{ tier: 2, code: finalCode, action: "approved" }], finalCode, source: "tier2" },
   });
   check("verdict stored", v.status === 200 && v.json.ok === true);
   console.log(`session: ${s.json.sessionId}`);

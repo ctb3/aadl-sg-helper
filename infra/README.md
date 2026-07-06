@@ -106,10 +106,14 @@ Each account is independent, so test and prod toggle separately.
   only the telemetry JSON) — so accuracy/speed reporting is unaffected either
   way. See `src/app/sessions-report.ts --summary` for the cross-version rollup.
 
+Flips deploy with the custom **`aadl-sg-flip`** strategy (100% at once, zero
+bake) — instant and immediately re-flippable, unlike `AppConfig.AllAtOnce`'s
+10-minute bake window that locks the environment between flips.
+
 **Flip it — console (simplest):** AppConfig → Applications → `aadl-sg` →
 Configuration profiles → `flags` → edit the `store-images` value (enabled
 on/off) → save a new version → **Start deployment** to the env with the
-`AppConfig.AllAtOnce` strategy.
+`aadl-sg-flip` strategy.
 
 **Flip it — CLI:**
 
@@ -118,14 +122,15 @@ export AWS_PROFILE=aadl-sg-prod-admin   # or aadl-sg-test-admin
 APP=$(aws appconfig list-applications --query "Items[?Name=='aadl-sg'].Id" --output text)
 ENV=$(aws appconfig list-environments --application-id "$APP" --query "Items[0].Id" --output text)
 PROF=$(aws appconfig list-configuration-profiles --application-id "$APP" --query "Items[?Name=='flags'].Id" --output text)
+STRAT=$(aws appconfig list-deployment-strategies --query "Items[?Name=='aadl-sg-flip'].Id" --output text)
 # New version with the flag OFF (enabled:true to turn it back on):
-aws appconfig create-hosted-configuration-version --application-id "$APP" \
+printf '%s' '{"version":"1","flags":{"store-images":{"name":"store-images"}},"values":{"store-images":{"enabled":false}}}' > /tmp/flag.json
+VER=$(aws appconfig create-hosted-configuration-version --application-id "$APP" \
   --configuration-profile-id "$PROF" --content-type application/json \
-  --content '{"version":"1","flags":{"store-images":{"name":"store-images"}},"values":{"store-images":{"enabled":false}}}' \
-  /tmp/appconfig-ver.json   # VersionNumber is in the stdout JSON
+  --content fileb:///tmp/flag.json --query VersionNumber --output text /tmp/appconfig-ver.json)
 aws appconfig start-deployment --application-id "$APP" --environment-id "$ENV" \
-  --configuration-profile-id "$PROF" --configuration-version <VersionNumber> \
-  --deployment-strategy-id AppConfig.AllAtOnce
+  --configuration-profile-id "$PROF" --configuration-version "$VER" \
+  --deployment-strategy-id "$STRAT"
 ```
 
 > **Bootstrap re-apply required (one-time, per account):** this feature added

@@ -1,6 +1,7 @@
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
+import { downscaleToLongestEdge } from "../src/image";
 
 /**
  * Local smoke client for src/app/server.ts (run with `npx tsx infra/apitest.ts`
@@ -39,7 +40,13 @@ async function main(): Promise<void> {
   check("bad sessionId rejected", badId.status === 400, `status=${badId.status}`);
 
   const s = await api("/api/session");
-  check("session created", s.status === 200 && !!s.json.uploadUrl, `id=${s.json.sessionId}`);
+  // store-images ON → presigned uploadUrl present; OFF → absent (inline transport).
+  const keep = s.json.storeImages !== false;
+  check(
+    "session created",
+    s.status === 200 && (keep ? !!s.json.uploadUrl : !s.json.uploadUrl),
+    `id=${s.json.sessionId} storeImages=${keep}`,
+  );
   if (s.status !== 200) return;
 
   // Submission endpoints: validation only — no live aadl.org traffic here
@@ -61,15 +68,30 @@ async function main(): Promise<void> {
   if (!img) throw new Error(`no test image in ${dir}`);
   console.log(`  using ${img}`);
 
-  const up = await fetch(s.json.uploadUrl, {
-    method: "PUT",
-    headers: { "content-type": "image/jpeg" },
-    body: fs.readFileSync(path.join(dir, img)),
-  });
-  check("photo uploaded via presigned URL", up.ok, `status=${up.status}`);
+  const imgBytes = fs.readFileSync(path.join(dir, img));
+
+  // Transport mirrors the client: ON → presigned PUT then {sessionId}; OFF →
+  // the photo (and later the crop) ride inline, nothing is stored in S3.
+  let extractBody: Record<string, unknown>;
+  if (keep) {
+    const up = await fetch(s.json.uploadUrl, {
+      method: "PUT",
+      headers: { "content-type": "image/jpeg" },
+      body: imgBytes,
+    });
+    check("photo uploaded via presigned URL", up.ok, `status=${up.status}`);
+    extractBody = { sessionId: s.json.sessionId };
+  } else {
+    check("no presigned URL when store-images OFF", !s.json.uploadUrl);
+    // Mirror the client: downscale to the GCV input size so the inline base64
+    // payload stays under the ~6MB Function URL request cap (raw phone JPEGs
+    // exceed it). The real client does this in a Web Worker before posting.
+    const jpeg = await downscaleToLongestEdge(imgBytes, 2400);
+    extractBody = { sessionId: s.json.sessionId, photo: jpeg.toString("base64") };
+  }
 
   const t0 = Date.now();
-  const ex = await api("/api/extract", { sessionId: s.json.sessionId });
+  const ex = await api("/api/extract", extractBody);
   check(
     "extract ran",
     ex.status === 200 && typeof ex.json.tier1?.code === "string" && !!ex.json.cropDataUrl,
@@ -77,7 +99,10 @@ async function main(): Promise<void> {
   );
 
   const t1 = Date.now();
-  const esc = await api("/api/escalate", { sessionId: s.json.sessionId });
+  const esc = await api(
+    "/api/escalate",
+    keep ? { sessionId: s.json.sessionId } : { sessionId: s.json.sessionId, crop: ex.json.cropDataUrl },
+  );
   check(
     "escalate ran (Claude on crop)",
     esc.status === 200 && typeof esc.json.tier2?.code === "string",

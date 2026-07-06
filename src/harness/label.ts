@@ -1,7 +1,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { config } from "./config";
+import { config } from "../core/config";
 
 /**
  * Minimal local labeling helper. Serves each unlabeled image from IMAGES_DIR

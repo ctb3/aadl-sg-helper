@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ALL_ARMS, ALL_READERS, type Arm, type ReaderName, type RunRecord } from "./types";
-import { calibrationBuckets } from "./score";
+import { ALL_ARMS, ALL_READERS, type Arm, type ReaderName, type RunRecord } from "../core/types";
+import { calibrationBuckets } from "../core/score";
 
 const CSV_COLUMNS: (keyof RunRecord)[] = [
   "filename",

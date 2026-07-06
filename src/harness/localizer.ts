@@ -1,7 +1,7 @@
-import { config, tokenCost } from "./config";
-import { converseVision } from "./bedrock";
-import { extractJsonObject } from "./prompt";
-import type { BBox } from "./types";
+import { config, tokenCost } from "../core/config";
+import { converseVision } from "../core/bedrock";
+import { extractJsonObject } from "../core/prompt";
+import type { BBox } from "../core/types";
 
 const LOCALIZER_SYSTEM =
   "You locate the handwritten code region on an AADL Summer Game sign.";

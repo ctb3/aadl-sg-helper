@@ -1,13 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { modelTag, sanitize } from "./cachekey";
-import { config } from "./config";
-import { cropWithPadding, downscaleToLongestEdge } from "./image";
-import { combinedLine, gcvLines } from "./postproc";
-import { claudeReader } from "./readers/claude";
+import { config } from "../core/config";
+import { cropWithPadding, downscaleToLongestEdge } from "../core/image";
+import { combinedLine, gcvLines } from "../core/postproc";
+import { claudeReader } from "../core/readers/claude";
 import { writeReportMd, writeResultsCsv } from "./report";
-import { cer, normalize } from "./score";
-import type { ReaderResult, RunRecord } from "./types";
+import { cer, normalize } from "../core/score";
+import type { ReaderResult, RunRecord } from "../core/types";
 
 /**
  * Tier-2 crop experiment: Claude reads a HIGH-RES crop of the original photo,
@@ -15,7 +15,7 @@ import type { ReaderResult, RunRecord } from "./types";
  * Targets the failure mode of raw framing: at MAX_EDGE downscale a
  * small-in-frame sign leaves the handwriting too few pixels to read.
  *
- *   npx tsx src/tier2.ts [--from-prepped]
+ *   npx tsx src/harness/tier2.ts [--from-prepped]
  *
  * Requires fresh GCV caches (npm run bake -- --reader gcv --arm none).
  * Results cached like the main harness; crops written to data/crops for

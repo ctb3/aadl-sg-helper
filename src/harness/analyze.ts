@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { modelTag, sanitize } from "./cachekey";
-import { config } from "./config";
-import { cer, normalize } from "./score";
+import { config } from "../core/config";
+import { cer, normalize } from "../core/score";
 import {
   alnum,
   combined,
@@ -11,14 +11,14 @@ import {
   tallestLine,
   textractLines,
   type StrategyResult,
-} from "./postproc";
+} from "../core/postproc";
 
 /**
  * Offline post-processing bake-off: re-scores the geometry-aware engines
  * (GCV, Textract) under different isolation strategies using cached raw
  * responses — zero API calls. Run after `npm run bake`.
  *
- *   npx tsx src/analyze.ts
+ *   npx tsx src/harness/analyze.ts
  */
 
 interface GroundTruth {
@@ -184,7 +184,7 @@ function main(): void {
   // price of more Claude calls. So we track "wrong prefills" separately.
   const claudeTag = modelTag("claude", "none");
   const claudeByFile = new Map<string, { code: string; costUsd: number }>();
-  const claudeCropByFile = new Map<string, string>(); // tier2 via GCV-line crop (src/tier2.ts)
+  const claudeCropByFile = new Map<string, string>(); // tier2 via GCV-line crop (src/harness/tier2.ts)
   for (const r of both) {
     const c = loadCache(r.filename, "claude", claudeTag);
     if (c) claudeByFile.set(r.filename, { code: normalize(c.code ?? ""), costUsd: c.costUsd ?? 0 });
@@ -298,7 +298,7 @@ function main(): void {
   out.push(``);
   out.push(
     `"end-to-end (crop)" = tier 2 reads a high-res crop of the original photo at ` +
-      `GCV's tier-1 line bbox (src/tier2.ts) instead of the ${config.maxEdge}px full photo.`,
+      `GCV's tier-1 line bbox (src/harness/tier2.ts) instead of the ${config.maxEdge}px full photo.`,
   );
   const claudeAloneOk = both.filter((r) => claudeByFile.get(r.filename)?.code === r.truth).length;
   out.push(``);

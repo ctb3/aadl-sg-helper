@@ -3,7 +3,7 @@ import {
   GetLatestConfigurationCommand,
   StartConfigurationSessionCommand,
 } from "@aws-sdk/client-appconfigdata";
-import { config } from "../config";
+import { config } from "../core/config";
 
 /**
  * Runtime feature flags via AWS AppConfig (a feature-flags profile), read with

@@ -1,4 +1,4 @@
-import { config } from "../config";
+import { config } from "../core/config";
 
 /**
  * AADL (aadl.org, Drupal 10) site client for Summer Game code submission.

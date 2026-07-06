@@ -1,12 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { modelTag, sanitize } from "./cachekey";
-import { config } from "./config";
-import { downscaleToLongestEdge, cropWithPadding } from "./image";
+import { config } from "../core/config";
+import { downscaleToLongestEdge, cropWithPadding } from "../core/image";
 import { localize, type LocalizeResult } from "./localizer";
-import { readers } from "./readers/index";
+import { readers } from "../core/readers/index";
 import { writeReportMd, writeResultsCsv } from "./report";
-import { cer, normalize } from "./score";
+import { cer, normalize } from "../core/score";
 import {
   ALL_ARMS,
   ALL_READERS,
@@ -15,7 +15,7 @@ import {
   type ReaderName,
   type ReaderResult,
   type RunRecord,
-} from "./types";
+} from "../core/types";
 
 interface Args {
   readers: ReaderName[];

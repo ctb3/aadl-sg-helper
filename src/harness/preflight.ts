@@ -1,6 +1,6 @@
 import sharp from "sharp";
-import { config } from "./config";
-import { converseVision } from "./bedrock";
+import { config } from "../core/config";
+import { converseVision } from "../core/bedrock";
 
 /**
  * Preflight: one tiny call per cloud dependency (each a fraction of a cent) so

@@ -1,5 +1,5 @@
 /** "gcv_crop" (high-res crop at GCV's tier-1 line bbox) is produced by
- * src/tier2.ts, not the run.ts matrix — hence not in ALL_ARMS. */
+ * src/harness/tier2.ts, not the run.ts matrix — hence not in ALL_ARMS. */
 export type Arm = "none" | "model_crop" | "gcv_crop";
 export type ReaderName = "claude" | "nova" | "textract" | "gcv";
 

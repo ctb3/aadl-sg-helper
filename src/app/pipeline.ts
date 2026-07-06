@@ -1,11 +1,11 @@
-import { config } from "../config";
-import { cropAndDownscale, downscaleToLongestEdge, fitsAsIs } from "../image";
-import { alnum, combinedLine, gcvLines } from "../postproc";
-import type { BBox } from "../types";
-import { claudeReader } from "../readers/claude";
-import type { GcvWord } from "../readers/gcv";
-import { gcvReader } from "../readers/gcv";
-import type { ReaderResult } from "../types";
+import { config } from "../core/config";
+import { cropAndDownscale, downscaleToLongestEdge, fitsAsIs } from "../core/image";
+import { alnum, combinedLine, gcvLines } from "../core/postproc";
+import type { BBox } from "../core/types";
+import { claudeReader } from "../core/readers/claude";
+import type { GcvWord } from "../core/readers/gcv";
+import { gcvReader } from "../core/readers/gcv";
+import type { ReaderResult } from "../core/types";
 
 /**
  * The proven cascade as buffer-in library functions for the field-test app:

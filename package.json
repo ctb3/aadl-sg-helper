@@ -6,10 +6,10 @@
   "description": "Handwriting-extraction bake-off harness for AADL Summer Game sign codes",
   "scripts": {
     "app": "tsx src/app/server.ts",
-    "label": "tsx src/label.ts",
-    "preflight": "tsx src/preflight.ts",
-    "smoke": "tsx src/run.ts --limit 1",
-    "bake": "tsx src/run.ts",
+    "label": "tsx src/harness/label.ts",
+    "preflight": "tsx src/harness/preflight.ts",
+    "smoke": "tsx src/harness/run.ts --limit 1",
+    "bake": "tsx src/harness/run.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

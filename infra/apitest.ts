@@ -1,7 +1,7 @@
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
-import { cropAndDownscale, downscaleToLongestEdge } from "../src/image";
+import { cropAndDownscale, downscaleToLongestEdge } from "../src/core/image";
 
 /**
  * Local smoke client for src/app/server.ts (run with `npx tsx infra/apitest.ts`

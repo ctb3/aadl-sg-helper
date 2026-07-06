@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
-import { config } from "../config";
-import { normalize } from "../score";
+import { config } from "../core/config";
+import { normalize } from "../core/score";
 
 /**
  * Field-session analysis: pulls every session under an S3 prefix and reports

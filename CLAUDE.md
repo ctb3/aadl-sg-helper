@@ -34,7 +34,7 @@ priors, and NO length limit: signup caps new codes at 12 chars, but
 grandfathered longer ones are live (HOTLIKEHARISSA, 14, redeemed 2026-07-05) —
 never (re)add a length check anywhere (removed from app+prompt in v0.3.2).
 Never let an LLM "correct" toward a real word; prompts must demand
-literal glyph-by-glyph transcription (see `src/prompt.ts`). There is no
+literal glyph-by-glyph transcription (see `src/core/prompt.ts`). There is no
 validation oracle — ground truth is hand labels only (`data/labels.csv`).
 Scoring normalizes case/whitespace (submission is case/space-insensitive).
 
@@ -42,12 +42,12 @@ Scoring normalizes case/whitespace (submission is case/space-insensitive).
 
 - `npm run label` — labeler at :5178; labels new images, then a verify pass
   over existing labels (session-scoped).
-- `npm run bake` / `npm run smoke` — the matrix. Flags via `src/run.ts`:
+- `npm run bake` / `npm run smoke` — the matrix. Flags via `src/harness/run.ts`:
   `--reader claude|nova|textract|gcv`, `--arm none|model_crop`, `--image`,
   `--limit`, `--force`. Writes `out/runs/<ts>/{report.md,results.csv}`.
-- `npx tsx src/analyze.ts` — post-processing strategies + cascade simulation,
+- `npx tsx src/harness/analyze.ts` — post-processing strategies + cascade simulation,
   entirely offline from `data/cache` (zero API calls, free to iterate).
-- `npx tsx src/tier2.ts` — Claude on a high-res crop at GCV's chosen-line bbox.
+- `npx tsx src/harness/tier2.ts` — Claude on a high-res crop at GCV's chosen-line bbox.
 - `npm run preflight` / `npm run typecheck`.
 - `npm run app` — field-test app server at :8080 (same code Lambda runs);
   `npx tsx infra/apitest.ts [--full] [base-url]` smoke-tests it (`--full` = paid
@@ -81,7 +81,7 @@ cropDataUrl payload, and gate-fail auto-escalation is the client calling
 /api/escalate with its crop — 95.2% vs 92.1% from upload-res crops, n=63).
 The old presigned-PUT + server-S3-GET transport survives one release for
 stale clients (handleSession still signs an uploadUrl). GCV calls are hedged
-(readers/gcv.ts, GCV_HEDGE_MS default 4000, ≤0 disables): GCV showed 6-30s
+(src/core/readers/gcv.ts, GCV_HEDGE_MS default 4000, ≤0 disables): GCV showed 6-30s
 service-side latency spikes in the field, and a duplicate $0.0015 attempt —
 fired only when the first is slow — caps that tail. Every kept session
 logs photo/crop/results/verdicts under s3://aadl-sg-sessions-…/sessions/ for
@@ -134,7 +134,7 @@ Web Worker via OffscreenCanvas (main-thread fallback kept).
 ## Caching rules (read before re-running anything)
 
 - `data/cache` keys include reader model, reader-prompt hash, and GCV input
-  resolution + JPEG quality (`src/cachekey.ts`; GCV_MAX_EDGE/GCV_QUALITY env) —
+  resolution + JPEG quality (`src/harness/cachekey.ts`; GCV_MAX_EDGE/GCV_QUALITY env) —
   editing `prompt.ts` or models auto-invalidates.
 - Only successful results are cached; errors retry on re-run. Cache replays
   report the ORIGINAL call's latencyMs (`cached` column marks them; report.md
@@ -151,7 +151,7 @@ Web Worker via OffscreenCanvas (main-thread fallback kept).
 subtraction + tallest-line + minConf≥0.5 gate → Claude on GCV-line crop →
 manual prefilled** = 97.4% end-to-end, <$0.003/img avg, 87% instant (0.4s).
 
-- GCV reads fine, isolates badly: post-processing (`src/postproc.ts`) took it
+- GCV reads fine, isolates badly: post-processing (`src/core/postproc.ts`) took it
   0%→87%. Both signals required — height alone ~54%, phrase alone ~5%.
 - Line heights must come from glyph/symbol boxes; axis-aligned boxes around
   tilted words or curved ring text are inflated (why Textract LINE blocks fail).

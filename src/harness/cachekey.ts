@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
-import { config } from "./config";
-import { READER_SYSTEM, READER_USER } from "./prompt";
-import type { Arm, ReaderName } from "./types";
+import { config } from "../core/config";
+import { READER_SYSTEM, READER_USER } from "../core/prompt";
+import type { Arm, ReaderName } from "../core/types";
 
 export function sanitize(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");

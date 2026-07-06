@@ -80,7 +80,10 @@ the CLIENT from its local ORIGINAL photo at the bbox extract returns
 cropDataUrl payload, and gate-fail auto-escalation is the client calling
 /api/escalate with its crop — 95.2% vs 92.1% from upload-res crops, n=63).
 The old presigned-PUT + server-S3-GET transport survives one release for
-stale clients (handleSession still signs an uploadUrl). Every kept session
+stale clients (handleSession still signs an uploadUrl). GCV calls are hedged
+(readers/gcv.ts, GCV_HEDGE_MS default 4000, ≤0 disables): GCV showed 6-30s
+service-side latency spikes in the field, and a duplicate $0.0015 attempt —
+fired only when the first is slow — caps that tail. Every kept session
 logs photo/crop/results/verdicts under s3://aadl-sg-sessions-…/sessions/ for
 future labeling. Access gate = APP_PIN (.env) checked server-side.
 Image storage is behind the `store-images` AppConfig feature flag (runtime,
@@ -131,8 +134,11 @@ Web Worker via OffscreenCanvas (main-thread fallback kept).
 ## Caching rules (read before re-running anything)
 
 - `data/cache` keys include reader model, reader-prompt hash, and GCV input
-  resolution (`src/cachekey.ts`) — editing `prompt.ts` or models auto-invalidates.
-- Only successful results are cached; errors retry on re-run.
+  resolution + JPEG quality (`src/cachekey.ts`; GCV_MAX_EDGE/GCV_QUALITY env) —
+  editing `prompt.ts` or models auto-invalidates.
+- Only successful results are cached; errors retry on re-run. Cache replays
+  report the ORIGINAL call's latencyMs (`cached` column marks them; report.md
+  "fresh" percentiles are the honest timing).
 - NOT keyed by image content: if files in `data/images` change under the same
   filename, wipe `data/prepped` and `data/cache` by hand.
 - Photos and labels are private → gitignored (`data/images`, `data/labels.csv`,
@@ -180,6 +186,12 @@ Speed push (2026-07-06, n=63 incl. harder field photos — gate t=0.5 now
   rejects of a gate-passed tier-1 are rare in the field (≈1 in 90 sessions).
 - Harness latency numbers: cache replays report the ORIGINAL call's latency —
   only `cached=false` rows (report.md "fresh" columns) measure this run.
+- Post-ship ledger (v0.4.0-test.11.1, 22 sessions, deliberately hard photos,
+  desktop→WiFi): shutter→verdict avg 1.5s·p99 3.8s (prod v0.4.0 was med
+  5.5s); extract avg 873ms (server 549ms, GCV 436ms); tier1-gated precision
+  95%, tier2 6/6, every wrong prefill oracle-caught. GCV service spikes
+  (6-30s, two clusters, cleared on their own — external) → the hedge above.
+  Lambda memory bump judged NOT worth it: only ~96ms/extract is CPU+S3.
 
 ## Environment (WSL + Windows)
 

@@ -28,6 +28,8 @@ export interface ReaderResult {
   costUsd?: number;
   /** Populated instead of a code when the call failed. */
   error?: string;
+  /** Set (true) only on cache replay — never persisted to data/cache. */
+  cached?: boolean;
 }
 
 export interface GroundTruth {
@@ -50,6 +52,8 @@ export interface RunRecord {
   meanConfidence: number | null;
   alternatives: string[];
   latencyMs: number;
+  /** true = replayed from data/cache: latencyMs is the ORIGINAL call's, not this run's. */
+  cached: boolean;
   costUsd: number;
   error: string | null;
 }

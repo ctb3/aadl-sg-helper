@@ -15,6 +15,7 @@ const CSV_COLUMNS: (keyof RunRecord)[] = [
   "minConfidence",
   "meanConfidence",
   "latencyMs",
+  "cached",
   "costUsd",
   "error",
 ];
@@ -35,12 +36,21 @@ interface Cell {
   exact: number;
   cerSum: number;
   latencySum: number;
+  /** Latencies of live (non-cache-replayed) calls only — cache hits report the
+   * original call's latency, which lies about the current run. */
+  freshLat: number[];
   costSum: number;
   errors: number;
 }
 
 function emptyCell(): Cell {
-  return { n: 0, exact: 0, cerSum: 0, latencySum: 0, costSum: 0, errors: 0 };
+  return { n: 0, exact: 0, cerSum: 0, latencySum: 0, freshLat: [], costSum: 0, errors: 0 };
+}
+
+function pctlMs(xs: number[], p: number): string {
+  if (!xs.length) return "—";
+  const s = [...xs].sort((a, b) => a - b);
+  return String(s[Math.max(0, Math.min(s.length - 1, Math.ceil(p * s.length) - 1))]);
 }
 
 function pct(x: number): string {
@@ -58,6 +68,7 @@ export function writeReportMd(records: RunRecord[], outDir: string, meta: Record
     if (r.exactMatch) c.exact++;
     c.cerSum += r.cer;
     c.latencySum += r.latencyMs;
+    if (!r.cached && !r.error) c.freshLat.push(r.latencyMs);
     c.costSum += r.costUsd;
     cells.set(key(r.reader, r.arm), c);
   }
@@ -102,16 +113,18 @@ export function writeReportMd(records: RunRecord[], outDir: string, meta: Record
   }
   lines.push("");
 
-  // Latency + cost + errors
+  // Latency + cost + errors. "fresh" = live calls this run; the mean also
+  // counts cache replays, whose latencies belong to the run that made them.
   lines.push("## Latency, cost, errors (by reader × arm)", "");
-  lines.push("| Reader | Arm | n | mean latency (ms) | total cost (USD) | errors |");
-  lines.push("| --- | --- | --- | --- | --- | --- |");
+  lines.push("| Reader | Arm | n | mean latency (ms) | fresh n | fresh p50 | fresh p95 | total cost (USD) | errors |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const reader of readers) {
     for (const arm of arms) {
       const c = get(reader, arm);
       if (!c.n) continue;
       lines.push(
-        `| ${reader} | ${arm} | ${c.n} | ${(c.latencySum / c.n).toFixed(0)} | ${c.costSum.toFixed(4)} | ${c.errors} |`,
+        `| ${reader} | ${arm} | ${c.n} | ${(c.latencySum / c.n).toFixed(0)} | ${c.freshLat.length} | ` +
+        `${pctlMs(c.freshLat, 0.5)} | ${pctlMs(c.freshLat, 0.95)} | ${c.costSum.toFixed(4)} | ${c.errors} |`,
       );
     }
   }

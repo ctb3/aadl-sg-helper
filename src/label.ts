@@ -19,10 +19,14 @@ const MIME: Record<string, string> = {
   ".gif": "image/gif",
 };
 
+// Subfolders (e.g. "extra hard/") are part of the corpus: entries are relative
+// paths, normalized to forward slashes so labels.csv rows are stable across
+// Windows/WSL runs (sanitize() maps "/" for cache/prepped filenames).
 function listImages(): string[] {
   if (!fs.existsSync(config.imagesDir)) return [];
   return fs
-    .readdirSync(config.imagesDir)
+    .readdirSync(config.imagesDir, { recursive: true })
+    .map((f) => String(f).replaceAll("\\", "/"))
     .filter((f) => IMAGE_EXTS.has(path.extname(f).toLowerCase()))
     .sort();
 }

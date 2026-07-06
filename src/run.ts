@@ -112,7 +112,9 @@ async function cachedRead(
     `${sanitize(gt.filename)}__${reader}__${arm}${modelTag(reader, arm)}.json`,
   );
   if (fs.existsSync(cachePath) && !force) {
-    return JSON.parse(fs.readFileSync(cachePath, "utf8"));
+    // The cached flag never lands in the cache file itself: it's added here on
+    // replay so reports can separate live latencies from replayed ones.
+    return { ...JSON.parse(fs.readFileSync(cachePath, "utf8")), cached: true };
   }
   let result: ReaderResult;
   try {
@@ -149,6 +151,7 @@ function buildRecord(gt: GroundTruth, reader: ReaderName, arm: Arm, res: ReaderR
     meanConfidence,
     alternatives: res.alternatives ?? [],
     latencyMs: res.latencyMs,
+    cached: res.cached ?? false,
     costUsd: res.costUsd ?? 0,
     error: res.error ?? null,
   };

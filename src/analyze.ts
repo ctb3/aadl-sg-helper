@@ -202,7 +202,11 @@ function main(): void {
 
   const GCV_COST = config.cost.gcvPerImage;
   const TXT_COST = config.cost.textractPerPage;
-  const LAT = { gcv: 0.4, textract: 1.6, claude: 2.6 }; // seconds, measured means
+  // Seconds, measured means. gcv/claude from prod field telemetry v0.4.0
+  // (sessions-report: GCV 408ms, Claude-on-crop Sonnet 4.6 1578ms); textract
+  // from the original bake. Claude was 2.6 when tier 2 read the 1500px full
+  // photo — the line crop is far fewer input tokens.
+  const LAT = { gcv: 0.4, textract: 1.6, claude: 1.6 };
 
   interface Policy {
     name: string;

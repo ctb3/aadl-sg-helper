@@ -94,7 +94,7 @@ async function main(): Promise<void> {
     );
     let result: any;
     if (fs.existsSync(cachePath)) {
-      result = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+      result = { ...JSON.parse(fs.readFileSync(cachePath, "utf8")), cached: true };
     } else {
       const src = fromPrepped
         ? await getPrepped2400(gt.filename)
@@ -151,6 +151,7 @@ async function main(): Promise<void> {
       meanConfidence: conf ? conf.reduce((a, b) => a + b, 0) / conf.length : null,
       alternatives: res.alternatives ?? [],
       latencyMs: res.latencyMs,
+      cached: res.cached ?? false,
       costUsd: res.costUsd ?? 0,
       error: res.error ?? null,
     };

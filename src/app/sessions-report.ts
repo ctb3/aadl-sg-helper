@@ -46,6 +46,10 @@ interface Row {
   source: string | null;
   verdicts: any[];
   timings: Record<string, number>;
+  /** per-step server breakdown from extract.json (present even when abandoned). */
+  serverT: Record<string, number | boolean>;
+  /** ditto for a user-escalated tier-2, from tier2.json. */
+  escServerT: Record<string, number | boolean>;
   clientMs: number | null;
   /** submit.json attempts: [{at, code, results:[{label, outcome, points, ...}]}] */
   submits: any[];
@@ -129,6 +133,10 @@ async function buildRow(prefix: string, id: string): Promise<Row | null> {
     source: verdict?.source ?? null,
     verdicts: verdict?.verdicts ?? [],
     timings: verdict?.timings ?? {},
+    // extract.json's copy misses s3PutJsonMs/totalMs (it can't time its own
+    // write); the client-plumbed copy in verdict.json has them, so prefer it.
+    serverT: verdict?.timings?.server ?? extract.serverTimings ?? {},
+    escServerT: verdict?.timings?.escalateServer ?? tier2?.serverTimings ?? {},
     clientMs: typeof verdict?.clientMs === "number" ? verdict.clientMs : null,
     submits: submit?.attempts ?? [],
   };
@@ -226,7 +234,25 @@ async function main(): Promise<void> {
   }
   console.log(`upload:   ${stats(T("uploadMs"))}  bytes: ${stats(done.map((r) => r.photo.bytes ?? 0).filter(Boolean)).replace(/ms/g, "B")}`);
   console.log(`extract:  ${stats(T("extractMs"))}  (server GCV: ${stats(rows.map((r) => r.t1LatMs!).filter((x) => x != null))})`);
+  const S = (k: string): number[] =>
+    rows.map((r) => r.serverT[k]).filter((x): x is number => typeof x === "number");
+  if (S("gcvMs").length) {
+    const cold = rows.filter((r) => r.serverT.coldStart === true).length;
+    console.log(
+      `  server: flag ${stats(S("flagMs"))} · s3get ${stats(S("s3GetMs"))} · norm ${stats(S("normMs"))} · ` +
+      `crop ${stats(S("cropMs"))} · putCrop ${stats(S("s3PutCropMs"))} · putJson ${stats(S("s3PutJsonMs"))} · ` +
+      `total ${stats(S("totalMs"))} · cold starts ${cold}/${rows.length}`,
+    );
+  }
   console.log(`escalate: ${stats(T("escalateMs"))}  (server Claude: ${stats(rows.map((r) => r.t2LatMs!).filter((x) => x != null))})`);
+  const E = (k: string): number[] =>
+    rows.map((r) => r.escServerT[k]).filter((x): x is number => typeof x === "number");
+  if (E("tier2Ms").length) {
+    console.log(
+      `  server: s3get ${stats(E("s3GetMs"))} · claude ${stats(E("claudeMs"))} · ` +
+      `putJson ${stats(E("s3PutJsonMs"))} · total ${stats(E("totalMs"))}`,
+    );
+  }
   console.log(`shutter→verdict (clientMs incl. human): ${stats(done.map((r) => r.clientMs!).filter((x) => x !== null))}`);
 
   // Slow-prep forensics: the field batches show bimodal prep (0.3-1s vs 10s+);
@@ -314,6 +340,27 @@ async function summary(): Promise<void> {
       col("extractMs").padEnd(15) + col("escalateMs").padEnd(15) +
       ap(done.map((r) => r.clientMs).filter((x): x is number => x !== null)),
     );
+  }
+
+  // Server-side extract breakdown (only versions that record serverTimings).
+  const withServer = versions.filter((v) => byVer.get(v)!.some((r) => typeof r.serverT.gcvMs === "number"));
+  if (withServer.length) {
+    console.log(`\n== server extract breakdown (avg·p99; cold = cold-start share)`);
+    console.log(
+      "version".padEnd(26) + "s3get".padEnd(15) + "gcv".padEnd(15) + "crop".padEnd(15) +
+      "putCrop".padEnd(15) + "putJson".padEnd(15) + "total".padEnd(15) + "cold",
+    );
+    for (const v of withServer) {
+      const rs = byVer.get(v)!;
+      const col = (k: string): string =>
+        ap(rs.map((r) => r.serverT[k]).filter((x): x is number => typeof x === "number"));
+      console.log(
+        v.slice(0, 25).padEnd(26) +
+        col("s3GetMs").padEnd(15) + col("gcvMs").padEnd(15) + col("cropMs").padEnd(15) +
+        col("s3PutCropMs").padEnd(15) + col("s3PutJsonMs").padEnd(15) + col("totalMs").padEnd(15) +
+        rate(rs.filter((r) => r.serverT.coldStart === true).length, rs.length),
+      );
+    }
   }
 }
 

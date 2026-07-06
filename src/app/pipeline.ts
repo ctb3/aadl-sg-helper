@@ -33,12 +33,16 @@ export interface Tier1 {
   raw: ReaderResult;
 }
 
-export async function runTier1(orig: Buffer): Promise<{ tier1: Tier1; cropJpeg: Buffer }> {
+export async function runTier1(
+  orig: Buffer,
+): Promise<{ tier1: Tier1; cropJpeg: Buffer; normMs: number; cropMs: number }> {
   // The client already uploads a 2400px EXIF-free JPEG; skip the redundant
   // decode+re-encode then. Oversized/EXIF-rotated uploads still get normalized.
+  let t = Date.now();
   const gcvInput = (await fitsAsIs(orig, config.gcvMaxEdge))
     ? orig
     : await downscaleToLongestEdge(orig, config.gcvMaxEdge);
+  const normMs = Date.now() - t;
   const raw = await gcvReader.read(gcvInput, "gcv_crop");
   const words = (raw.rawResponse as { words?: GcvWord[] })?.words ?? [];
   const line = combinedLine(gcvLines(words));
@@ -48,11 +52,15 @@ export async function runTier1(orig: Buffer): Promise<{ tier1: Tier1; cropJpeg: 
   const gatePassed = code.length > 0 && minConf !== null && minConf >= MIN_CONF_GATE;
 
   // The crop is produced either way: tier 2 and the manual view both show it.
+  t = Date.now();
   const cropJpeg = line
     ? await downscaleToLongestEdge(await cropWithPadding(orig, line.bbox, CROP_PAD_PCT), config.maxEdge)
     : await downscaleToLongestEdge(orig, config.maxEdge);
+  const cropMs = Date.now() - t;
 
   return {
+    normMs,
+    cropMs,
     tier1: {
       code,
       minConf,

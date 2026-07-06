@@ -606,6 +606,7 @@ async function onPhoto(file) {
     t = Date.now();
     const res = await api("/api/extract", extractBody);
     state.timings.extractMs = Date.now() - t;
+    state.timings.server = res.serverTimings; // per-step server breakdown → verdict.json
     state.tier1 = res.tier1;
     state.tier2 = res.tier2;
     state.cropDataUrl = res.cropDataUrl;
@@ -633,6 +634,7 @@ async function onPhoto(file) {
       t = Date.now();
       const r = await api("/api/escalate", escalateBody());
       state.timings.escalateMs = Date.now() - t;
+      state.timings.escalateServer = r.serverTimings;
       state.tier2 = r.tier2;
     }
     const code2 = state.tier2 ? norm(state.tier2.code) : "";
@@ -660,6 +662,7 @@ async function reject() {
     const t = Date.now();
     const r = await api("/api/escalate", escalateBody());
     state.timings.escalateMs = Date.now() - t;
+    state.timings.escalateServer = r.serverTimings;
     state.tier2 = r.tier2;
     showManual();
   } catch (err) { fail(err); }

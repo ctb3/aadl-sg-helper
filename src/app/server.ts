@@ -42,6 +42,15 @@ const APP_VERSION: string = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../package.json"), "utf8"),
 ).version;
 
+// First extract/escalate served by this process = a Lambda cold start (locally:
+// first request since launch). Attributes the p99 tail before tuning for it.
+let coldProcess = true;
+function takeColdStart(): boolean {
+  const was = coldProcess;
+  coldProcess = false;
+  return was;
+}
+
 const SESSION_ID_RE = /^\d{10,16}-[a-f0-9]{8}$/;
 const sessionKey = (id: string, name: string): string =>
   `sessions/v${APP_VERSION}/${id}/${name}`;
@@ -148,8 +157,12 @@ const ESCALATE_OFF_MSG =
   "Sorry — the closer-look reader is switched off right now. Check the code by hand instead.";
 
 async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
+  const t0 = Date.now();
+  const coldStart = takeColdStart();
   const sessionId = requireSessionId(body);
+  let t = Date.now();
   const mode = await extractMode();
+  const flagMs = Date.now() - t;
   if (mode === "off") throw new Error(EXTRACT_OFF_MSG);
   // Transport is derived from the request shape, not a re-read of the flag, so
   // it can't disagree with what the client actually did across a mid-session
@@ -157,35 +170,60 @@ async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
   // absence ⇒ ON, and the photo was PUT to S3 (presigned).
   const inline = typeof body.photo === "string" && body.photo.length > 0;
   const keep = !inline;
+  t = Date.now();
   const photo = inline
     ? decodeImage(body.photo, "photo")
     : await s3GetBuffer(sessionKey(sessionId, "photo.jpg"));
+  const s3GetMs = inline ? 0 : Date.now() - t;
 
-  const { tier1, cropJpeg } = await runTier1(photo);
+  const { tier1, cropJpeg, normMs, cropMs } = await runTier1(photo);
   // Persist the crop only when keeping images (it bridges extract→escalate);
   // when OFF the client holds the crop (cropDataUrl) and hands it back.
+  t = Date.now();
   if (keep) await s3Put(sessionKey(sessionId, "crop.jpg"), cropJpeg, "image/jpeg");
+  const s3PutCropMs = keep ? Date.now() - t : 0;
 
   // Gate failure auto-escalates server-side: the user should never be shown a
   // result the bake-off proved unreliable. Unless Claude is circuit-broken
   // (mode gcv) — then the manual screen is the fallback and tier2 stays null.
+  t = Date.now();
   const tier2 = tier1.gatePassed || mode !== "full" ? null : await runTier2(cropJpeg);
+  const tier2Ms = tier2 ? Date.now() - t : 0;
 
+  // Per-step wall times for the speed work; gcvMs/tier2 latencyMs are the
+  // vendor calls alone, so overhead is attributable line by line. extract.json
+  // can't contain its own write time — the response's copy carries it.
+  const serverTimings: Record<string, number | boolean> = {
+    coldStart,
+    flagMs,
+    s3GetMs,
+    normMs,
+    gcvMs: tier1.latencyMs,
+    cropMs,
+    s3PutCropMs,
+    tier2Ms,
+  };
+
+  t = Date.now();
   await s3PutJson(sessionKey(sessionId, "extract.json"), {
     at: new Date().toISOString(),
     version: APP_VERSION,
     storeImages: keep,
     extractMode: mode,
     photo: { ...(await dims(photo)), bytes: photo.length },
+    serverTimings,
     tier1, // includes raw GCV words/geometry for later analysis
     tier2,
   });
+  serverTimings.s3PutJsonMs = Date.now() - t;
+  serverTimings.totalMs = Date.now() - t0;
 
   const { raw: _raw, ...tier1Public } = tier1;
   return {
     tier1: tier1Public,
     tier2,
     extractMode: mode, // fresher than the session's copy if the flag flipped
+    serverTimings,
     cropDataUrl: `data:image/jpeg;base64,${cropJpeg.toString("base64")}`,
   };
 }
@@ -195,12 +233,23 @@ async function handleEscalate(body: Record<string, unknown>): Promise<unknown> {
   if ((await extractMode()) !== "full") throw new Error(ESCALATE_OFF_MSG);
   // Inline `crop` ⇒ OFF (client hands back the crop it holds); its absence ⇒
   // re-read the stored crop from S3. Mirrors the extract transport, race-free.
-  const crop = typeof body.crop === "string" && body.crop
+  const t0 = Date.now();
+  const coldStart = takeColdStart();
+  let t = Date.now();
+  const inline = typeof body.crop === "string" && body.crop;
+  const crop = inline
     ? decodeImage(body.crop, "crop")
     : await s3GetBuffer(sessionKey(sessionId, "crop.jpg"));
+  const s3GetMs = inline ? 0 : Date.now() - t;
+  t = Date.now();
   const tier2 = await runTier2(crop);
-  await s3PutJson(sessionKey(sessionId, "tier2.json"), { at: new Date().toISOString(), tier2 });
-  return { tier2 };
+  const tier2Ms = Date.now() - t;
+  const serverTimings: Record<string, number | boolean> = { coldStart, s3GetMs, claudeMs: tier2.latencyMs, tier2Ms };
+  t = Date.now();
+  await s3PutJson(sessionKey(sessionId, "tier2.json"), { at: new Date().toISOString(), serverTimings, tier2 });
+  serverTimings.s3PutJsonMs = Date.now() - t;
+  serverTimings.totalMs = Date.now() - t0;
+  return { tier2, serverTimings };
 }
 
 async function handleVerdict(body: Record<string, unknown>): Promise<unknown> {

@@ -8,23 +8,38 @@ const client = process.env.GCP_SA_KEY_JSON
   ? new vision.ImageAnnotatorClient({ credentials: JSON.parse(process.env.GCP_SA_KEY_JSON) })
   : new vision.ImageAnnotatorClient();
 
+/** Hedge outcome, logged in rawResponse (→ session extract.json) only when the
+ * hedge actually fired: a winner latency far above the threshold means BOTH
+ * attempts were slow — a correlated service-side episode no hedge can cap
+ * (2026-07-06 evening: 10/13 prod sessions at 3.3-20s with the hedge active). */
+export interface GcvHedge {
+  fired: true;
+  winner: "primary" | "hedge";
+}
+
 /** documentTextDetection with a hedged second attempt: GCV showed service-side
  * latency spikes in the field (median 659ms, spikes to 30s — 2026-07-06 batch;
  * same images fast on retry), and one duplicate call ($0.0015) caps that tail
  * at ~hedge+p50. The timer is cancelled the moment the first attempt settles,
  * so the hedge only ever fires — and only ever bills — on a slow call.
  * GCV_HEDGE_MS <= 0 disables. */
-async function detectHedged(image: Buffer): Promise<[any]> {
+async function detectHedged(image: Buffer): Promise<{ result: [any]; hedge?: GcvHedge }> {
   const attempt = (): Promise<[any]> => client.documentTextDetection({ image: { content: image } }) as Promise<[any]>;
-  if (config.gcvHedgeMs <= 0) return attempt();
+  if (config.gcvHedgeMs <= 0) return { result: await attempt() };
+  let fired = false;
   let timer: NodeJS.Timeout | undefined;
-  const hedge = new Promise<[any]>((resolve, reject) => {
-    timer = setTimeout(() => attempt().then(resolve, reject), config.gcvHedgeMs);
+  const primary = attempt().then((r) => ({ r, who: "primary" as const }));
+  const hedge = new Promise<{ r: [any]; who: "hedge" }>((resolve, reject) => {
+    timer = setTimeout(() => {
+      fired = true;
+      attempt().then((r) => resolve({ r, who: "hedge" }), reject);
+    }, config.gcvHedgeMs);
   });
   try {
     // Promise.any: first FULFILLED wins; a fast primary failure just waits for
     // the hedge (a natural retry). Both failing surfaces the primary's error.
-    return await Promise.any([attempt(), hedge]);
+    const { r, who } = await Promise.any([primary, hedge]);
+    return { result: r, hedge: fired ? { fired, winner: who } : undefined };
   } catch (err) {
     throw (err as AggregateError).errors?.[0] ?? err;
   } finally {
@@ -64,7 +79,7 @@ export const gcvReader: Reader = {
   name: "gcv",
   async read(image: Buffer, arm: Arm): Promise<ReaderResult> {
     const t0 = Date.now();
-    const [result] = await detectHedged(image);
+    const { result: [result], hedge } = await detectHedged(image);
     const latencyMs = Date.now() - t0;
 
     const fta: any = result.fullTextAnnotation;
@@ -129,6 +144,7 @@ export const gcvReader: Reader = {
           text: fta?.text ?? "",
           note: "band empty; used longest [A-Z0-9] token",
           words,
+          ...(hedge && { hedge }),
         },
         latencyMs,
         costUsd: config.cost.gcvPerImage,
@@ -146,6 +162,7 @@ export const gcvReader: Reader = {
         keptSymbols: chosen.length,
         totalSymbols: symbols.length,
         words,
+        ...(hedge && { hedge }),
       },
       latencyMs,
       costUsd: config.cost.gcvPerImage,

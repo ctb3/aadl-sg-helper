@@ -40,7 +40,9 @@ export const config = {
   // JPEG quality of the harness's GCV input (upload-bytes ladder; 90 = classic).
   gcvQuality: num("GCV_QUALITY", 90),
   // Hedged-retry threshold for GCV calls (see readers/gcv.ts); <=0 disables.
-  gcvHedgeMs: num("GCV_HEDGE_MS", 4000),
+  // 1500 ≈ 1.5x the healthy field max (p50 ~390ms, max ~1043ms, n=22): fires
+  // on <5% of healthy calls, caps uncorrelated spikes at ~1.9s not ~4.4s.
+  gcvHedgeMs: num("GCV_HEDGE_MS", 1500),
   cropPaddingPct: num("CROP_PADDING_PCT", 0.15),
 
   gcvBand: {

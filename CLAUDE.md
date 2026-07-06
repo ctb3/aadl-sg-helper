@@ -81,9 +81,15 @@ cropDataUrl payload, and gate-fail auto-escalation is the client calling
 /api/escalate with its crop — 95.2% vs 92.1% from upload-res crops, n=63).
 The old presigned-PUT + server-S3-GET transport survives one release for
 stale clients (handleSession still signs an uploadUrl). GCV calls are hedged
-(src/core/readers/gcv.ts, GCV_HEDGE_MS default 4000, ≤0 disables): GCV showed 6-30s
+(src/core/readers/gcv.ts, GCV_HEDGE_MS default 1500, ≤0 disables): GCV showed 6-30s
 service-side latency spikes in the field, and a duplicate $0.0015 attempt —
-fired only when the first is slow — caps that tail. Every kept session
+fired only when the first is slow — caps that tail. Hedge outcome (fired,
+winner) is logged in tier1.raw.rawResponse.hedge when it fires; a winner far
+above the threshold = both attempts slow = correlated Google-side episode
+(2026-07-06 evening prod batch: 10/13 sessions 3.3-20s, hedge active —
+confirmed external, uncappable; healthy batches same day p50 ~390ms).
+`src/harness/gcvprobe.ts` is the standalone latency probe (gRPC vs REST,
+paid, no hedge). Every kept session
 logs photo/crop/results/verdicts under s3://aadl-sg-sessions-…/sessions/ for
 future labeling. Access gate = APP_PIN (.env) checked server-side.
 Image storage is behind the `store-images` AppConfig feature flag (runtime,

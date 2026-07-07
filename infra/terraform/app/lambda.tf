@@ -48,15 +48,20 @@ resource "aws_lambda_function_url" "app" {
 
 # The PIN check inside the server is the real gate; the URL is public.
 # InvokeFunctionUrl alone still 403'd in the old account — the URL front-end
-# also wanted a lambda:InvokeFunction grant. That one now carries the
-# FunctionUrlAuthType condition too, so it only applies to invocations coming
-# through the URL — a bare `aws lambda invoke` from a random AWS account no
-# longer works. (If the URL ever starts 403ing again, the condition on
-# public_invoke is the first suspect — drop it and re-test.)
+# also wants a lambda:InvokeFunction grant. That grant is scoped with the
+# lambda:InvokedViaFunctionUrl=true condition so a bare `aws lambda invoke`
+# from a random account stays closed (the 2026-07 security-pass goal). NOTE
+# the condition key differs per action: function_url_auth_type
+# (lambda:FunctionUrlAuthType) is only accepted on InvokeFunctionUrl —
+# putting it on the InvokeFunction grant fails apply with
+# InvalidParameterValueException; invoked_via_function_url is the one that
+# fits InvokeFunction. Both accounts also carry AWS-managed
+# FunctionURLAllowPublicAccess/FunctionURLAllowInvokeAction statements (same
+# effect, added by the console outside Terraform) — harmless duplicates.
 #
-# The depends_on chain serializes these: URL creation and the two AddPermission
-# calls all mutate the function, and running them concurrently threw
-# ResourceConflictException (409) on prod's first apply.
+# The depends_on chain serializes these: URL creation and the two
+# AddPermission calls all mutate the function, and running them concurrently
+# threw ResourceConflictException (409) on prod's first apply.
 resource "aws_lambda_permission" "public_url" {
   statement_id           = "public-url"
   action                 = "lambda:InvokeFunctionUrl"
@@ -68,11 +73,11 @@ resource "aws_lambda_permission" "public_url" {
 }
 
 resource "aws_lambda_permission" "public_invoke" {
-  statement_id           = "public-invoke"
-  action                 = "lambda:InvokeFunction"
-  function_name          = aws_lambda_function.app.function_name
-  principal              = "*"
-  function_url_auth_type = "NONE"
+  statement_id             = "public-invoke"
+  action                   = "lambda:InvokeFunction"
+  function_name            = aws_lambda_function.app.function_name
+  principal                = "*"
+  invoked_via_function_url = true
 
   depends_on = [aws_lambda_permission.public_url]
 }

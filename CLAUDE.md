@@ -142,9 +142,12 @@ x-amz-content-sha256 on POSTs.
 Gotchas burned in already: Lambda rejects BuildKit attestation manifests
 (build with --provenance=false --sbom=false); the Function URL needs a
 public lambda:InvokeFunction grant besides InvokeFunctionUrl (PIN still holds
-either way) — since 2026-07-07 both grants carry the FunctionUrlAuthType=NONE
-condition so the bare Invoke API is closed (if the URL ever 403s again, drop
-the condition on public-invoke first); the Function URL + its two permissions must apply serially
+either way) — the bare Invoke API is closed by conditions, and the condition
+KEY differs per action: FunctionUrlAuthType=NONE on the InvokeFunctionUrl
+grant, InvokedViaFunctionUrl=true (`invoked_via_function_url`) on the
+InvokeFunction grant. FunctionUrlAuthType on InvokeFunction is an API error —
+AddPermission 400s, which broke the 2026-07-07 test deploy (if the URL ever
+403s again, drop the condition on public-invoke first); the Function URL + its two permissions must apply serially
 (concurrent AddPermission → 409); GitHub jobs with `environment:` present
 OIDC sub `repo:…:environment:<name>` not `ref:…` (CI-role trust accepts
 both); Android Chrome throttles main-thread canvas work after returning

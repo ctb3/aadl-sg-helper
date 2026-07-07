@@ -81,7 +81,6 @@ export async function runTier1(
 
 export interface Tier2 {
   code: string;
-  perCharConfidence?: number[];
   alternatives?: string[];
   latencyMs: number;
   costUsd: number;
@@ -92,7 +91,6 @@ export async function runTier2(cropJpeg: Buffer): Promise<Tier2> {
   if (res.error) throw new Error(res.error);
   return {
     code: alnum(res.code ?? ""),
-    perCharConfidence: res.perCharConfidence,
     alternatives: res.alternatives,
     latencyMs: res.latencyMs,
     costUsd: res.costUsd ?? 0,

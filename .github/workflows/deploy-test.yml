@@ -78,7 +78,4 @@ jobs:
           # First deploy after a DNS change can race propagation; give the
           # custom domain up to 3 minutes to start answering.
           for i in $(seq 1 18); do curl -fsS -o /dev/null "$URL/" && break; sleep 10; done
-          PIN=$(aws ssm get-parameter --name /aadl-sg/app-pin --with-decryption \
-            --query Parameter.Value --output text)
-          echo "::add-mask::$PIN"
-          APP_PIN="$PIN" npx tsx infra/apitest.ts "$URL"
+          npx tsx infra/apitest.ts "$URL"

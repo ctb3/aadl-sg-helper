@@ -1,6 +1,6 @@
 # Custom domain (var.app_domain) → CloudFront → the Lambda Function URL.
-# The Function URL stays public (NONE + PIN gate) and keeps working as a
-# direct bypass for debugging. No OAC: SigV4-signing the origin would force
+# The Function URL stays public (auth NONE) and keeps working as a direct
+# bypass for debugging. No OAC: SigV4-signing the origin would force
 # every browser POST to carry x-amz-content-sha256, which the client doesn't
 # send. If the origin ever needs locking down, a secret custom origin header
 # checked in server.ts is the cheap option.
@@ -90,7 +90,7 @@ resource "aws_cloudfront_distribution" "app" {
     # by-name data sources need un-scopeable List* permissions on the CI role.
     # CachingDisabled: never cache (GET / is no-store anyway; API is dynamic).
     cache_policy_id = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
-    # AllViewerExceptHostHeader: forward everything (query, cookies, x-app-pin)
+    # AllViewerExceptHostHeader: forward everything (query, cookies, headers)
     # EXCEPT Host — a forwarded viewer Host 403s the Function URL.
     origin_request_policy_id = "b689b0a8-53d0-40ab-baf2-68738e2966ac"
   }

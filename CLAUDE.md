@@ -51,9 +51,7 @@ Scoring normalizes case/whitespace (submission is case/space-insensitive).
 - `npm run preflight` / `npm run typecheck`.
 - `npm run app` — field-test app server at :8080 (same code Lambda runs);
   `npx tsx infra/apitest.ts [--full] [base-url]` smoke-tests it (`--full` = paid
-  path; base URL must have NO trailing slash; pass the PIN with
-  `WSLENV=APP_PIN/w APP_PIN=…` — a plain env prefix dies at the WSL→Windows
-  boundary and dotenv silently substitutes .env's pin).
+  path; base URL must have NO trailing slash).
 - Deploys are CI-only (`.github/workflows/`, runbook in `infra/README.md`):
   push to main → TEST account auto-deploy; publish GitHub Release vX.Y.Z →
   PROD (tag must equal package.json version — bump it in the PR). Rollback =
@@ -75,12 +73,11 @@ independently attributable). Transport (v0.5 speed push): the client posts a
 2400px q0.7 JPEG INLINE in /api/extract (one network pass; GCV starts on
 arrival; server persists photo.jpg overlapped with GCV when store-images is
 on — client echoes the session's verdict as `keep`). Tier-2 crops are cut by
-the CLIENT from its local ORIGINAL photo at the bbox extract returns
-(client sends `clientCrop:true`; server then skips auto-tier2, omits the
-cropDataUrl payload, and gate-fail auto-escalation is the client calling
-/api/escalate with its crop — 95.2% vs 92.1% from upload-res crops, n=63).
-The old presigned-PUT + server-S3-GET transport survives one release for
-stale clients (handleSession still signs an uploadUrl). The busy screen
+the CLIENT from its local ORIGINAL photo at the bbox extract returns (the
+server never auto-runs tier 2 and never ships a crop payload; gate-fail
+escalation is the client calling /api/escalate with its crop — 95.2% vs 92.1%
+from upload-res crops, n=63). The old presigned-PUT + server-S3-GET transport
+was removed in 1.0.0 (images are inline-only). The busy screen
 names the slow step (v0.5.2): /api/extract and /api/escalate go over XHR so
 upload progress is visible ("Uploading photo… NN%"), and every phase arms a
 4s stall watchdog that adds a second line (weak signal vs slow read vs slow
@@ -95,7 +92,8 @@ confirmed external, uncappable; healthy batches same day p50 ~390ms).
 `src/harness/gcvprobe.ts` is the standalone latency probe (gRPC vs REST,
 paid, no hedge). Every kept session
 logs photo/crop/results/verdicts under s3://aadl-sg-sessions-…/sessions/ for
-future labeling. Access gate = APP_PIN (.env) checked server-side.
+future labeling. The app is PUBLIC as of 1.0.0 (the APP_PIN gate was removed;
+the `extract-mode` flag is the cost circuit breaker).
 Image storage is behind the `store-images` AppConfig feature flag (runtime,
 per-account, flip without redeploy — src/app/flags.ts, infra/README.md; default
 ON). Reader cost circuit breaker: the `extract-mode` flag (enabled+mode=full →
@@ -120,7 +118,7 @@ to the current version's prefix. GET / is `Cache-Control: no-store` — a
 phone-cached stale client once silently dropped a batch's instrumentation.
 Accounts (us-east-2, Terraform in infra/terraform/, OIDC from GitHub — no
 long-lived keys): TEST 825555019530, PROD 766253192238; old account
-619467956318 was torn down 2026-07-05. Secrets (APP_PIN, GCV key) live in
+619467956318 was torn down 2026-07-05. Secrets (the GCV key) live in
 each account's SSM under /aadl-sg/ and are fetched at cold start
 (src/app/secrets.ts; the Lambda env carries only the parameter names — never
 put secret values back into lambda_env/TF state). Security pass (2026-07-07):
@@ -128,11 +126,10 @@ outbound aadl.org requests refuse any redirect off *.aadl.org/https (cookie
 containment, src/app/aadl.ts assertAllowedUrl); GET / ships a hash-based CSP +
 security headers and API responses are no-store (server.ts cspFor); unknown
 500s return a generic message (user-facing aadl.org outcomes are AadlError →
-502 — the client treats 401 as "PIN rejected", so never use 401 for them);
-the labeler binds 127.0.0.1.
+502 — the failure is upstream, not ours); the labeler binds 127.0.0.1.
 Custom domains (v0.4.0): prod https://aadlcode.ctb3.net, test
 https://aadlcode-test.ctb3.net — CloudFront in front of the Function URL
-(which stays public as a debugging bypass; PIN gates both). Per-env hosted
+(which stays public as a debugging bypass). Per-env hosted
 zone in bootstrap, delegated from ctb3.net (ctb3-general account, manual
 one-time NS record — redo it if the zone is ever recreated). CloudFront must
 NOT forward the viewer Host header (Function URLs route by Host — the

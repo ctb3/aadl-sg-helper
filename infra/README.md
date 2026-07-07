@@ -12,7 +12,7 @@ Stacks (`infra/terraform/`):
 - `bootstrap/` — Carl-only, admin SSO profile, once per account: TF state bucket, OIDC provider, `aadl-sg-ci` role + `aadl-sg-app-boundary` permissions boundary, ECR repo (immutable tags), the app-domain hosted zone.
 - `app/` — applied by CI: sessions bucket, Lambda exec role (under the boundary), the Lambda + public Function URL, ACM cert + CloudFront + DNS records for the custom domain, and the **AppConfig feature-flag stack** (`appconfig.tf`). Secrets never leave SSM until runtime: the Lambda env carries parameter *names*, and the app fetches the values at cold start (`src/app/secrets.ts`) — nothing secret lands in TF state or `lambda:GetFunctionConfiguration`. Feature flags are also read at *runtime* (see below).
 
-The app answers at a custom domain per env — **prod `https://aadlcode.ctb3.net`, test `https://aadlcode-test.ctb3.net`** — via CloudFront in front of the Function URL. The raw Function URL (`terraform output function_url`) keeps working as a debugging bypass; the PIN gates both.
+The app answers at a custom domain per env — **prod `https://aadlcode.ctb3.net`, test `https://aadlcode-test.ctb3.net`** — via CloudFront in front of the Function URL. The raw Function URL (`terraform output function_url`) keeps working as a debugging bypass. The app is public — no access gate (the `extract-mode` flag is the cost circuit breaker).
 
 ## One-time bootstrap runbook (Carl, admin, per account)
 
@@ -26,11 +26,10 @@ The app answers at a custom domain per env — **prod `https://aadlcode.ctb3.net
    (the model in `infra/terraform/app/*.tfvars`, currently Sonnet 4.6).
    Per-account Marketplace subscription — same gotcha CLAUDE.md records.
 
-3. **SSM parameters** in each account (us-east-2). Different PIN per env;
-   prefix the commands with a space to keep them out of shell history:
+3. **SSM parameter** in each account (us-east-2). Prefix the command with a
+   space to keep it out of shell history:
 
    ```bash
-    aws ssm put-parameter --name /aadl-sg/app-pin --type SecureString --value '<PIN>'
     aws ssm put-parameter --name /aadl-sg/gcp-sa-key --type SecureString \
       --value "$(jq -c . < /path/to/gcv-service-account.json)"
    ```
@@ -87,7 +86,7 @@ The app answers at a custom domain per env — **prod `https://aadlcode.ctb3.net
    account's bootstrap outputs. Repo-level variable: `AWS_REGION=us-east-2`.
 
 First test deploy = next push to main. Verify with the paid path once:
-`APP_PIN=<test-pin> npx tsx infra/apitest.ts --full https://aadlcode-test.ctb3.net`.
+`npx tsx infra/apitest.ts --full https://aadlcode-test.ctb3.net`.
 
 > Migration note: the old account (619467956318) was fully torn down
 > 2026-07-05 after its session data was synced into the prod bucket.
@@ -176,5 +175,4 @@ Same commands CI runs, with an admin SSO profile: docker build+push an
 immutable tag, then `terraform -chdir=infra/terraform/app init -backend-config
 bucket/region` + `apply -var-file=<env>.tfvars -var image_uri=...`.
 `npx tsx infra/apitest.ts [--full] <url>` smoke-tests any deployment
-(no trailing slash on the URL; from WSL pass the PIN as
-`WSLENV=APP_PIN/w APP_PIN=… npx tsx …` — apitest runs on Windows node).
+(no trailing slash on the URL; apitest runs on Windows node).

@@ -4,7 +4,6 @@
 
 locals {
   lambda_env = {
-    APP_PIN_SSM_PARAM    = "/aadl-sg/app-pin"
     GCP_SA_KEY_SSM_PARAM = "/aadl-sg/gcp-sa-key"
     SESSIONS_BUCKET      = aws_s3_bucket.sessions.bucket
     CLAUDE_READER_MODEL  = var.claude_reader_model

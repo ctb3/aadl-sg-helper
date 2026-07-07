@@ -4,7 +4,6 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { config } from "../core/config";
 import { dims } from "../core/image";
 import { AadlError, AuthExpiredError, connect, loadJar, submitCode } from "./aadl";
@@ -17,20 +16,18 @@ import { loadSecrets } from "./secrets";
  * locally (`npm run app`) and on Lambda behind the Web Adapter.
  *
  * Session flow (client drives it, S3 is the only state):
- *   POST /api/session   → { sessionId, storeImages, uploadUrl? }
- *   POST /api/extract   → tier 1; auto-runs tier 2 when the gate fails
- *   POST /api/escalate  → tier 2 on the crop (user rejected tier 1)
+ *   POST /api/session   → { sessionId, storeImages, extractMode }
+ *   POST /api/extract   → tier 1 on the inline photo
+ *   POST /api/escalate  → tier 2 on the client's inline crop
  *   POST /api/verdict   → writes the user's approve/reject trail + final code
  *
- * The `store-images` AppConfig flag (see ./flags) gates image *retention*, not
- * telemetry, and picks the transport at session start:
- *   ON  → client PUTs photo.jpg via a presigned URL (dodges the 6MB Function
- *         URL cap); server reads photo + crop back from S3 (the crop bridges
- *         extract→escalate). Every session leaves photo/crop/extract/verdict
- *         JSON under sessions/<id>/ — raw material for future labels.csv entries.
- *   OFF → client posts the photo (and, on escalate, the crop) inline; the
- *         server processes them in memory and writes *only* the telemetry JSON.
- *         No image bytes ever land in S3.
+ * Images always ride inline in the request body (one network pass; GCV starts
+ * on arrival). The `store-images` AppConfig flag (see ./flags) gates image
+ * *retention*, not telemetry:
+ *   ON  → every session leaves photo/crop/extract/verdict JSON under
+ *         sessions/<id>/ — raw material for future labels.csv entries.
+ *   OFF → the server processes images in memory and writes *only* the
+ *         telemetry JSON. No image bytes ever land in S3.
  */
 
 const s3 = new S3Client({ region: config.awsRegion });
@@ -55,19 +52,6 @@ function takeColdStart(): boolean {
 const SESSION_ID_RE = /^\d{10,16}-[a-f0-9]{8}$/;
 const sessionKey = (id: string, name: string): string =>
   `sessions/v${APP_VERSION}/${id}/${name}`;
-
-// Resolved at startup (env or SSM via loadSecrets) — config.appPin snapshots
-// the env before the SSM fetch has run, so don't read it after boot.
-let appPin = config.appPin;
-
-function pinOk(req: http.IncomingMessage): boolean {
-  if (!appPin) return true; // no PIN configured (local dev)
-  const pin = req.headers["x-app-pin"];
-  if (typeof pin !== "string") return false;
-  const a = Buffer.from(pin);
-  const b = Buffer.from(appPin);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
 
 function send(res: http.ServerResponse, status: number, body: unknown): void {
   const json = JSON.stringify(body);
@@ -96,8 +80,8 @@ function cspFor(html: string): string {
   ].join("; ");
 }
 
-// Default 1MB cap; the inline-image routes (extract/escalate when store-images
-// is OFF) carry a base64 JPEG, so they raise it (see MAX_BODY_BYTES).
+// Default 1MB cap; the inline-image routes (extract/escalate) carry a base64
+// JPEG, so they raise it (see MAX_BODY_BYTES).
 async function readJsonBody(
   req: http.IncomingMessage,
   maxBytes = 1_000_000,
@@ -113,9 +97,9 @@ async function readJsonBody(
   return text ? JSON.parse(text) : {};
 }
 
-// Inline base64 JPEGs ride in these bodies when store-images is OFF. A ≤2400px
-// photo is ~1–3MB (~1.3–4MB base64); 9MB leaves margin under the client's
-// re-encode-to-fit guard while still rejecting absurd payloads.
+// Inline base64 JPEGs ride in these bodies. A ≤2400px photo is ~1–3MB
+// (~1.3–4MB base64); 9MB leaves margin under the client's re-encode-to-fit
+// guard while still rejecting absurd payloads.
 const MAX_BODY_BYTES: Record<string, number> = {
   "/api/extract": 9_000_000,
   "/api/escalate": 9_000_000,
@@ -155,22 +139,7 @@ function requireSessionId(body: Record<string, unknown>): string {
 async function handleSession(): Promise<unknown> {
   const sessionId = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
   const [keep, mode] = await Promise.all([storeImages(), extractMode()]);
-  // The presigned PUT (S3 transport) is issued only when we intend to keep the
-  // photo. When OFF the client posts it inline instead — nothing hits S3.
-  // Still issued when extract-mode is off (presigning is a free local
-  // signature, and a stale pre-flag client would break without it).
-  const uploadUrl = keep
-    ? await getSignedUrl(
-        s3,
-        new PutObjectCommand({
-          Bucket: config.sessionsBucket,
-          Key: sessionKey(sessionId, "photo.jpg"),
-          ContentType: "image/jpeg",
-        }),
-        { expiresIn: 600 },
-      )
-    : undefined;
-  return { sessionId, storeImages: keep, extractMode: mode, uploadUrl };
+  return { sessionId, storeImages: keep, extractMode: mode };
 }
 
 // User-facing "sorry" messages for the extract-mode circuit breaker; the
@@ -190,60 +159,41 @@ async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
   const mode = await extractMode();
   const flagMs = Date.now() - t;
   if (mode === "off") throw new Error(EXTRACT_OFF_MSG);
-  // The photo rides inline for current clients regardless of store-images —
-  // the old presigned-PUT-then-server-GET transport moved the same bytes over
-  // the network twice, serially, before GCV could start. The client echoes its
-  // session's store-images verdict (`keep`) so a mid-session flag flip can't
-  // break the session's no-image-bytes-in-S3 promise. The S3 transport (no
-  // inline photo ⇒ the client PUT it presigned, which implies keeping it)
-  // remains for one release as the stale-client fallback.
-  const inline = typeof body.photo === "string" && body.photo.length > 0;
-  const keep = inline ? body.keep === true : true;
-  // Current clients also cut their own tier-2 crop from the local original
-  // (higher-res than any upload) — for them the server never auto-runs tier 2
-  // and omits the crop payload from the response.
-  const clientCrop = body.clientCrop === true;
-  t = Date.now();
-  const photo = inline
-    ? decodeImage(body.photo, "photo")
-    : await s3GetBuffer(sessionKey(sessionId, "photo.jpg"));
-  const s3GetMs = inline ? 0 : Date.now() - t;
+  // The photo rides inline regardless of store-images (one network pass; GCV
+  // starts on arrival). The client echoes its session's store-images verdict
+  // (`keep`) so a mid-session flag flip can't break the session's
+  // no-image-bytes-in-S3 promise.
+  const photo = decodeImage(body.photo, "photo");
+  const keep = body.keep === true;
 
   // Photo persistence overlaps GCV+crop instead of preceding the response.
-  const photoPut = inline && keep
+  const photoPut = keep
     ? s3Put(sessionKey(sessionId, "photo.jpg"), photo, "image/jpeg")
     : null;
 
   const { tier1, cropJpeg, normMs, cropMs } = await runTier1(photo);
 
-  // Gate failure auto-escalates server-side for legacy clients only: current
-  // ones escalate with their own (better) crop. Claude circuit-broken (mode
-  // gcv) — the manual screen is the fallback and tier2 stays null.
-  t = Date.now();
-  const tier2 =
-    tier1.gatePassed || mode !== "full" || clientCrop ? null : await runTier2(cropJpeg);
-  const tier2Ms = tier2 ? Date.now() - t : 0;
+  // Tier 2 never runs here: the client cuts its own crop from its local
+  // original (higher-res than any upload) and calls /api/escalate itself,
+  // including on gate failure.
 
-  // Per-step wall times for the speed work; gcvMs/tier2 latencyMs are the
-  // vendor calls alone, so overhead is attributable line by line. The tail S3
-  // writes run concurrently; extract.json can't contain its own write time —
-  // the response's copy carries s3TailMs/totalMs.
+  // Per-step wall times for the speed work; gcvMs is the vendor call alone,
+  // so overhead is attributable line by line. The tail S3 writes run
+  // concurrently; extract.json can't contain its own write time — the
+  // response's copy carries s3TailMs/totalMs.
   const serverTimings: Record<string, number | boolean> = {
     coldStart,
     flagMs,
-    s3GetMs,
     normMs,
     gcvMs: tier1.latencyMs,
     cropMs,
-    tier2Ms,
   };
 
   t = Date.now();
   await Promise.all([
     photoPut,
-    // The crop still bridges extract→escalate for legacy clients and feeds
-    // future labeling; escalate overwrites it with the client's original-res
-    // crop when one arrives.
+    // The server-cut crop feeds future labeling; escalate overwrites it with
+    // the client's original-res crop when one arrives.
     keep ? s3Put(sessionKey(sessionId, "crop.jpg"), cropJpeg, "image/jpeg") : null,
     s3PutJson(sessionKey(sessionId, "extract.json"), {
       at: new Date().toISOString(),
@@ -253,7 +203,7 @@ async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
       photo: { ...(await dims(photo)), bytes: photo.length },
       serverTimings,
       tier1, // includes raw GCV words/geometry for later analysis
-      tier2,
+      tier2: null, // tier 2 only ever runs via /api/escalate (tier2.json)
     }),
   ]);
   serverTimings.s3TailMs = Date.now() - t;
@@ -262,40 +212,28 @@ async function handleExtract(body: Record<string, unknown>): Promise<unknown> {
   const { raw: _raw, ...tier1Public } = tier1;
   return {
     tier1: tier1Public,
-    tier2,
+    tier2: null,
     extractMode: mode, // fresher than the session's copy if the flag flipped
     serverTimings,
-    // ~200-400KB of base64 the current client no longer downloads: it shows
-    // and escalates with its locally-cut crop (tier1.bbox names the line).
-    ...(clientCrop
-      ? {}
-      : { cropDataUrl: `data:image/jpeg;base64,${cropJpeg.toString("base64")}` }),
   };
 }
 
 async function handleEscalate(body: Record<string, unknown>): Promise<unknown> {
   const sessionId = requireSessionId(body);
   if ((await extractMode()) !== "full") throw new Error(ESCALATE_OFF_MSG);
-  // Inline `crop` ⇒ OFF (client hands back the crop it holds); its absence ⇒
-  // re-read the stored crop from S3. Mirrors the extract transport, race-free.
   const t0 = Date.now();
   const coldStart = takeColdStart();
-  let t = Date.now();
-  const inline = typeof body.crop === "string" && body.crop;
-  const crop = inline
-    ? decodeImage(body.crop, "crop")
-    : await s3GetBuffer(sessionKey(sessionId, "crop.jpg"));
-  const s3GetMs = inline ? 0 : Date.now() - t;
+  const crop = decodeImage(body.crop, "crop");
   const keep = body.keep === true;
-  t = Date.now();
+  let t = Date.now();
   const tier2 = await runTier2(crop);
   const tier2Ms = Date.now() - t;
-  const serverTimings: Record<string, number | boolean> = { coldStart, s3GetMs, claudeMs: tier2.latencyMs, tier2Ms };
+  const serverTimings: Record<string, number | boolean> = { coldStart, claudeMs: tier2.latencyMs, tier2Ms };
   t = Date.now();
   await Promise.all([
     // The client's inline crop is cut from its local original — a better
     // labeling artifact than the extract-time server crop; keep it.
-    inline && keep ? s3Put(sessionKey(sessionId, "crop.jpg"), crop, "image/jpeg") : null,
+    keep ? s3Put(sessionKey(sessionId, "crop.jpg"), crop, "image/jpeg") : null,
     s3PutJson(sessionKey(sessionId, "tier2.json"), { at: new Date().toISOString(), serverTimings, tier2 }),
   ]);
   serverTimings.s3TailMs = Date.now() - t;
@@ -309,10 +247,10 @@ async function handleVerdict(body: Record<string, unknown>): Promise<unknown> {
     at: new Date().toISOString(),
     ...(typeof body.record === "object" && body.record !== null ? body.record : {}),
   });
-  // No image cleanup needed: a photo only ever reaches S3 when store-images was
-  // ON at session start (the client used the presigned PUT), so anything stored
-  // was stored intentionally. Flipping OFF is forward-looking — new sessions
-  // post inline and never write images.
+  // No image cleanup needed: a photo only ever reaches S3 when the client's
+  // session said store-images was ON (`keep`), so anything stored was stored
+  // intentionally. Flipping OFF is forward-looking — new sessions never write
+  // images.
   return { ok: true };
 }
 
@@ -430,10 +368,6 @@ const server = http.createServer(async (req, res) => {
     send(res, 404, { error: "not found" });
     return;
   }
-  if (!pinOk(req)) {
-    send(res, 401, { error: "bad PIN" });
-    return;
-  }
   if (!config.sessionsBucket) {
     send(res, 500, { error: "SESSIONS_BUCKET not configured" });
     return;
@@ -444,9 +378,7 @@ const server = http.createServer(async (req, res) => {
     send(res, 200, await handler(body));
   } catch (err: any) {
     const msg = String(err?.message ?? err);
-    if (err?.name === "NoSuchKey") {
-      send(res, 404, { error: "session object not found (upload the photo first?)" });
-    } else if (msg === EXTRACT_OFF_MSG || msg === ESCALATE_OFF_MSG) {
+    if (msg === EXTRACT_OFF_MSG || msg === ESCALATE_OFF_MSG) {
       send(res, 503, { error: msg });
     } else if (
       msg.startsWith("bad ") || msg === "body too large" ||
@@ -455,9 +387,8 @@ const server = http.createServer(async (req, res) => {
     ) {
       send(res, 400, { error: msg });
     } else if (err instanceof AadlError) {
-      // Curated user-facing aadl.org outcomes (login rejected, form drift, …).
-      // Not 401 — the client treats 401 as "PIN rejected" and resets to the
-      // PIN screen.
+      // Curated user-facing aadl.org outcomes (login rejected, form drift, …)
+      // as 502: the failure is upstream, not ours.
       send(res, 502, { error: msg });
     } else {
       console.error(`${req.method} ${url.pathname} failed:`, err);
@@ -467,12 +398,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 (async () => {
-  // On Lambda this pulls APP_PIN/GCP_SA_KEY_JSON from SSM before the Web
-  // Adapter sees the port open; locally it's a no-op (env/.env wins).
+  // On Lambda this pulls GCP_SA_KEY_JSON from SSM before the Web Adapter sees
+  // the port open; locally it's a no-op (env/.env wins).
   await loadSecrets();
-  appPin = process.env.APP_PIN ?? "";
   server.listen(config.appPort, () => {
     console.log(`app v${APP_VERSION} listening on http://localhost:${config.appPort}`);
-    console.log(`  bucket=${config.sessionsBucket || "(unset!)"} pin=${appPin ? "set" : "OFF"}`);
+    console.log(`  bucket=${config.sessionsBucket || "(unset!)"}`);
   });
 })();

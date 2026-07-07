@@ -101,7 +101,6 @@ npm run preflight
 | `AWS_PROFILE` | if not using default creds | SSO profile name |
 | `GOOGLE_APPLICATION_CREDENTIALS` | yes | path to GCP Vision service-account JSON |
 | `CLAUDE_READER_MODEL` | yes | Bedrock model ID for tier 2 |
-| `APP_PIN` | no | empty = no PIN gate locally |
 | `SESSIONS_BUCKET` | no | set only to test S3 session logging locally |
 | `PORT` | no | default 8080 |
 | `AADL_BASE_URL` | no | override aadl.org origin (e.g. for a mock) |

@@ -101,15 +101,6 @@
     <h1>AADL Summer Game Code Helper</h1>
   </header>
 
-  <div class="view" id="v-pin">
-    <div class="card">
-      <p>Enter the access PIN:</p>
-      <input type="password" id="pin-input" autocomplete="off" inputmode="text">
-      <p class="err" id="pin-err" hidden>PIN rejected, try again.</p>
-    </div>
-    <button class="primary big" id="pin-save">Continue</button>
-  </div>
-
   <div class="view" id="v-home">
     <button class="primary big" id="btn-photo">&#128247; Photograph a sign</button>
     <input type="file" id="file" accept="image/*" capture="environment" hidden>
@@ -296,7 +287,6 @@ function show(view, busyMsg) {
   clearTimeout(stallTimer);
   $("busy-sub").hidden = true;
   if (busyMsg) $("busy-msg").textContent = busyMsg;
-  if (view === "v-pin") $("pin-input").focus();
 }
 
 // Per-phase busy screen: primary line plus a "still working" second line that
@@ -317,7 +307,6 @@ function busy(msg, stallMsg) {
 
 function fail(err) {
   console.error(err);
-  if (err && err.pinRejected) return; // already showing the PIN view
   $("e-msg").textContent = String((err && err.message) || err);
   show("v-error");
 }
@@ -420,7 +409,6 @@ async function connectAccount() {
     $("c-user").value = "";
     home();
   } catch (err) {
-    if (err && err.pinRejected) return;
     $("c-err").textContent = String((err && err.message) || err);
     $("c-err").hidden = false;
   } finally {
@@ -433,15 +421,9 @@ async function connectAccount() {
 async function api(path, body) {
   const r = await fetch(path, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-app-pin": localStorage.getItem("pin") || "" },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(body || {}),
   });
-  if (r.status === 401) {
-    localStorage.removeItem("pin");
-    $("pin-err").hidden = false;
-    show("v-pin");
-    throw { pinRejected: true };
-  }
   if (!r.ok) {
     const e = await r.json().catch(() => ({}));
     throw new Error(e.error || "HTTP " + r.status);
@@ -450,7 +432,7 @@ async function api(path, body) {
 }
 
 // XHR variant of api() for the big photo POST: fetch can't observe
-// request-body progress, XHR's upload events can. Same PIN/error semantics.
+// request-body progress, XHR's upload events can. Same error semantics.
 // onProgress(fraction) fires while the body is in flight; onSent() when the
 // last byte is out the door (response latency after that is the server).
 function apiUpload(path, body, { onProgress, onSent } = {}) {
@@ -458,7 +440,6 @@ function apiUpload(path, body, { onProgress, onSent } = {}) {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", path);
     xhr.setRequestHeader("content-type", "application/json");
-    xhr.setRequestHeader("x-app-pin", localStorage.getItem("pin") || "");
     xhr.responseType = "json";
     if (onProgress) {
       xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
@@ -467,12 +448,6 @@ function apiUpload(path, body, { onProgress, onSent } = {}) {
     xhr.onerror = () => reject(new Error("network error"));
     xhr.ontimeout = () => reject(new Error("network timeout"));
     xhr.onload = () => {
-      if (xhr.status === 401) {
-        localStorage.removeItem("pin");
-        $("pin-err").hidden = false;
-        show("v-pin");
-        return reject({ pinRejected: true });
-      }
       if (xhr.status < 200 || xhr.status >= 300) {
         return reject(new Error((xhr.response && xhr.response.error) || "HTTP " + xhr.status));
       }
@@ -730,7 +705,7 @@ async function showManual(notice) {
   show("v-manual");
 }
 
-// Fired on the camera-button tap: the presign round-trip rides along with the
+// Fired on the camera-button tap: the session round-trip rides along with the
 // user pointing/shooting, so it's free by the time the photo exists.
 let pendingSession = null;
 function prefetchSession() {
@@ -775,17 +750,15 @@ async function onPhoto(file) {
       return showManual("Sorry! automatic code reading is switched off right now. Type the code from the sign:");
     }
 
-    // One network pass: the photo rides inline in extract (the old presigned
-    // S3 PUT + server GET moved the same bytes twice, serially, before GCV
-    // could start). `keep` echoes the session's store-images verdict — the
-    // SERVER persists the photo, overlapped with GCV. uploadMs is now just the
-    // base64 encode; the wire time lives in extractMs (server totalMs splits it).
+    // One network pass: the photo rides inline in extract. `keep` echoes the
+    // session's store-images verdict — the SERVER persists the photo,
+    // overlapped with GCV. uploadMs is just the base64 encode; the wire time
+    // lives in extractMs (server totalMs splits it).
     t = Date.now();
     const extractBody = {
       sessionId: state.sessionId,
       photo: await reencodeToFit(jpeg.blob),
       keep: state.storeImages,
-      clientCrop: true, // we cut our own tier-2 crop; skip the crop payload
     };
     state.timings.uploadMs = Date.now() - t;
     state.timings.uploadBytes = jpeg.blob.size;
@@ -826,8 +799,8 @@ async function onPhoto(file) {
       return presentResult(res.tier1.code);
     }
 
-    // Tier 1 is unusable: gate failure (server already ran tier 2) or a read
-    // longer than any valid code (gate passed, so tier 2 hasn't run yet).
+    // Tier 1 is unusable: gate failure or a nonsense read the gate let
+    // through — either way we escalate (or fall to manual) ourselves.
     state.verdicts.push({
       tier: 1, code: res.tier1.code, minConf: res.tier1.minConf,
       action: res.tier1.gatePassed ? "auto_skipped_toolong" : "auto_skipped_gate",
@@ -1010,13 +983,6 @@ async function submitToAadl(code) {
 }
 
 // ---- wiring ----
-$("pin-save").onclick = () => {
-  const v = $("pin-input").value.trim();
-  if (!v) return;
-  localStorage.setItem("pin", v);
-  $("pin-input").value = "";
-  home();
-};
 $("btn-photo").onclick = () => { prefetchSession(); $("file").click(); };
 $("file").onchange = (e) => { if (e.target.files[0]) onPhoto(e.target.files[0]); };
 
@@ -1068,7 +1034,6 @@ const enterClicks = (inputId, btnId) => {
     if (e.key === "Enter") { e.preventDefault(); $(btnId).click(); }
   });
 };
-enterClicks("pin-input", "pin-save");
 enterClicks("m-input", "m-submit");
 enterClicks("c-user", "c-connect");
 enterClicks("c-pass", "c-connect");
@@ -1104,7 +1069,7 @@ $("f-howto").onclick = (e) => { e.preventDefault(); overlay("v-howto"); };
 $("a-back").onclick = () => show(overlayReturn);
 $("h-done").onclick = () => { localStorage.setItem("howtoSeen", "1"); show(overlayReturn); };
 
-localStorage.getItem("pin") ? home() : show("v-pin");
+home();
 </script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 {
   "name": "aadl-sg-helper",
-  "version": "0.5.2",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Handwriting-extraction bake-off harness for AADL Summer Game sign codes",
@@ -18,7 +18,6 @@
     "@aws-sdk/client-s3": "^3.700.0",
     "@aws-sdk/client-ssm": "^3.1080.0",
     "@aws-sdk/client-textract": "^3.700.0",
-    "@aws-sdk/s3-request-presigner": "^3.700.0",
     "@google-cloud/vision": "^5.3.7",
     "dotenv": "^16.4.5",
     "sharp": "^0.33.5"

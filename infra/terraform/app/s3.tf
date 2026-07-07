@@ -30,8 +30,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "sessions" {
   }
 }
 
-# Belt and suspenders: every access path today is HTTPS (SDK, presigned PUT);
-# this keeps it that way.
+# Belt and suspenders: every access path today is HTTPS (the SDK); this keeps
+# it that way.
 resource "aws_s3_bucket_policy" "sessions" {
   bucket = aws_s3_bucket.sessions.id
 
@@ -50,17 +50,4 @@ resource "aws_s3_bucket_policy" "sessions" {
   })
 
   depends_on = [aws_s3_bucket_public_access_block.sessions]
-}
-
-# The client uploads the full-res JPEG straight to S3 via a presigned PUT
-# (dodges the 6MB Function URL cap). Port of infra/s3-cors.json.
-resource "aws_s3_bucket_cors_configuration" "sessions" {
-  bucket = aws_s3_bucket.sessions.id
-
-  cors_rule {
-    allowed_origins = ["*"]
-    allowed_methods = ["PUT"]
-    allowed_headers = ["content-type"]
-    max_age_seconds = 3600
-  }
 }

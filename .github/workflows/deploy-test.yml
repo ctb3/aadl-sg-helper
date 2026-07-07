@@ -20,16 +20,16 @@ jobs:
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run typecheck
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -46,7 +46,7 @@ jobs:
           ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
           echo "image=${ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/aadl-sg-app" >> "$GITHUB_OUTPUT"
 
-      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2.1.6
 
       - name: Build and push image
         # --provenance/--sbom=false: BuildKit attestations create an OCI image
@@ -58,7 +58,7 @@ jobs:
             -t "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" \
             --push .
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_wrapper: false
 

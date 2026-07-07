@@ -10,7 +10,7 @@ Auth is GitHub OIDC → per-account role `aadl-sg-ci`. The test account's role t
 Stacks (`infra/terraform/`):
 
 - `bootstrap/` — Carl-only, admin SSO profile, once per account: TF state bucket, OIDC provider, `aadl-sg-ci` role + `aadl-sg-app-boundary` permissions boundary, ECR repo (immutable tags), the app-domain hosted zone.
-- `app/` — applied by CI: sessions bucket, Lambda exec role (under the boundary), the Lambda + public Function URL, ACM cert + CloudFront + DNS records for the custom domain, and the **AppConfig feature-flag stack** (`appconfig.tf`). Secrets are read from SSM at deploy time; feature flags are read at *runtime* (see below).
+- `app/` — applied by CI: sessions bucket, Lambda exec role (under the boundary), the Lambda + public Function URL, ACM cert + CloudFront + DNS records for the custom domain, and the **AppConfig feature-flag stack** (`appconfig.tf`). Secrets never leave SSM until runtime: the Lambda env carries parameter *names*, and the app fetches the values at cold start (`src/app/secrets.ts`) — nothing secret lands in TF state or `lambda:GetFunctionConfiguration`. Feature flags are also read at *runtime* (see below).
 
 The app answers at a custom domain per env — **prod `https://aadlcode.ctb3.net`, test `https://aadlcode-test.ctb3.net`** — via CloudFront in front of the Function URL. The raw Function URL (`terraform output function_url`) keeps working as a debugging bypass; the PIN gates both.
 

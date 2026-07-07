@@ -1,23 +1,14 @@
-# Secrets come from SSM at deploy time and land in the Lambda env — the
-# runtime contract (APP_PIN, GCP_SA_KEY_JSON, ...) is unchanged from mkenv.ts.
-# Note: the decrypted values do end up in the TF state file; the state bucket
-# is private, encrypted, and admin/CI-only — accepted for this project.
-
-data "aws_ssm_parameter" "app_pin" {
-  name = "/aadl-sg/app-pin"
-}
-
-data "aws_ssm_parameter" "gcp_sa_key" {
-  name = "/aadl-sg/gcp-sa-key"
-}
+# Secrets stay in SSM until runtime: the env carries parameter NAMES, and the
+# app fetches the values at cold start (src/app/secrets.ts). Nothing secret
+# lands in the TF state file or in lambda:GetFunctionConfiguration output.
 
 locals {
   lambda_env = {
-    APP_PIN             = data.aws_ssm_parameter.app_pin.value
-    SESSIONS_BUCKET     = aws_s3_bucket.sessions.bucket
-    GCP_SA_KEY_JSON     = data.aws_ssm_parameter.gcp_sa_key.value
-    CLAUDE_READER_MODEL = var.claude_reader_model
-    CLAUDE_THINKING     = var.claude_thinking
+    APP_PIN_SSM_PARAM    = "/aadl-sg/app-pin"
+    GCP_SA_KEY_SSM_PARAM = "/aadl-sg/gcp-sa-key"
+    SESSIONS_BUCKET      = aws_s3_bucket.sessions.bucket
+    CLAUDE_READER_MODEL  = var.claude_reader_model
+    CLAUDE_THINKING      = var.claude_thinking
     # AppConfig identifiers (not secrets) the flag reader polls at runtime.
     APPCONFIG_APP     = aws_appconfig_application.flags.id
     APPCONFIG_ENV     = aws_appconfig_environment.flags.environment_id
@@ -39,11 +30,11 @@ resource "aws_lambda_function" "app" {
   }
 
   lifecycle {
-    # Port of mkenv.ts's guard: Lambda rejects env payloads over 4KB. If the
-    # GCP key ever pushes past it, move GCP_SA_KEY_JSON to a runtime SSM fetch.
+    # Lambda rejects env payloads over 4KB. Nowhere near it since the secrets
+    # moved to a runtime SSM fetch, but the guard is free.
     precondition {
       condition     = length(jsonencode(local.lambda_env)) <= 4096
-      error_message = "Lambda environment exceeds the 4096-byte limit — move GCP_SA_KEY_JSON out of the env."
+      error_message = "Lambda environment exceeds the 4096-byte limit."
     }
   }
 
@@ -57,7 +48,11 @@ resource "aws_lambda_function_url" "app" {
 
 # The PIN check inside the server is the real gate; the URL is public.
 # InvokeFunctionUrl alone still 403'd in the old account — the URL front-end
-# also wanted a plain public lambda:InvokeFunction grant. Keeping both.
+# also wanted a lambda:InvokeFunction grant. That one now carries the
+# FunctionUrlAuthType condition too, so it only applies to invocations coming
+# through the URL — a bare `aws lambda invoke` from a random AWS account no
+# longer works. (If the URL ever starts 403ing again, the condition on
+# public_invoke is the first suspect — drop it and re-test.)
 #
 # The depends_on chain serializes these: URL creation and the two AddPermission
 # calls all mutate the function, and running them concurrently threw
@@ -73,10 +68,11 @@ resource "aws_lambda_permission" "public_url" {
 }
 
 resource "aws_lambda_permission" "public_invoke" {
-  statement_id  = "public-invoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.app.function_name
-  principal     = "*"
+  statement_id           = "public-invoke"
+  action                 = "lambda:InvokeFunction"
+  function_name          = aws_lambda_function.app.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
 
   depends_on = [aws_lambda_permission.public_url]
 }

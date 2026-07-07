@@ -18,6 +18,40 @@ resource "aws_s3_bucket_public_access_block" "sessions" {
   restrict_public_buckets = true
 }
 
+# Explicit SSE (S3 would default to this anyway; explicit beats implicit for
+# a bucket of user photos).
+resource "aws_s3_bucket_server_side_encryption_configuration" "sessions" {
+  bucket = aws_s3_bucket.sessions.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# Belt and suspenders: every access path today is HTTPS (SDK, presigned PUT);
+# this keeps it that way.
+resource "aws_s3_bucket_policy" "sessions" {
+  bucket = aws_s3_bucket.sessions.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyInsecureTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource  = [aws_s3_bucket.sessions.arn, "${aws_s3_bucket.sessions.arn}/*"]
+        Condition = { Bool = { "aws:SecureTransport" = "false" } }
+      },
+    ]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.sessions]
+}
+
 # The client uploads the full-res JPEG straight to S3 via a presigned PUT
 # (dodges the 6MB Function URL cap). Port of infra/s3-cors.json.
 resource "aws_s3_bucket_cors_configuration" "sessions" {

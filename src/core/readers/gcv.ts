@@ -2,11 +2,17 @@ import vision from "@google-cloud/vision";
 import { config } from "../config";
 import type { Arm, Reader, ReaderResult } from "../types";
 
-// Lambda has no key file on disk, so the app deploy passes the service-account
-// key inline; locally GOOGLE_APPLICATION_CREDENTIALS (a path) keeps working.
-const client = process.env.GCP_SA_KEY_JSON
-  ? new vision.ImageAnnotatorClient({ credentials: JSON.parse(process.env.GCP_SA_KEY_JSON) })
-  : new vision.ImageAnnotatorClient();
+// Lambda has no key file on disk, so the service-account key arrives inline in
+// GCP_SA_KEY_JSON; locally GOOGLE_APPLICATION_CREDENTIALS (a path) keeps
+// working. Created on first use, not at import: on Lambda the key is fetched
+// from SSM during startup (src/app/secrets.ts), after modules have loaded.
+let _client: InstanceType<typeof vision.ImageAnnotatorClient> | undefined;
+function client() {
+  _client ??= process.env.GCP_SA_KEY_JSON
+    ? new vision.ImageAnnotatorClient({ credentials: JSON.parse(process.env.GCP_SA_KEY_JSON) })
+    : new vision.ImageAnnotatorClient();
+  return _client;
+}
 
 /** Hedge outcome, logged in rawResponse (→ session extract.json) only when the
  * hedge actually fired: a winner latency far above the threshold means BOTH
@@ -24,7 +30,7 @@ export interface GcvHedge {
  * so the hedge only ever fires — and only ever bills — on a slow call.
  * GCV_HEDGE_MS <= 0 disables. */
 async function detectHedged(image: Buffer): Promise<{ result: [any]; hedge?: GcvHedge }> {
-  const attempt = (): Promise<[any]> => client.documentTextDetection({ image: { content: image } }) as Promise<[any]>;
+  const attempt = (): Promise<[any]> => client().documentTextDetection({ image: { content: image } }) as Promise<[any]>;
   if (config.gcvHedgeMs <= 0) return { result: await attempt() };
   let fired = false;
   let timer: NodeJS.Timeout | undefined;

@@ -7,9 +7,10 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { config } from "../core/config";
 import { dims } from "../core/image";
-import { AuthExpiredError, connect, loadJar, submitCode } from "./aadl";
+import { AadlError, AuthExpiredError, connect, loadJar, submitCode } from "./aadl";
 import { extractMode, storeImages } from "./flags";
 import { runTier1, runTier2 } from "./pipeline";
+import { loadSecrets } from "./secrets";
 
 /**
  * Field-test app server. Plain node:http (pattern: label.ts); runs unchanged
@@ -55,19 +56,44 @@ const SESSION_ID_RE = /^\d{10,16}-[a-f0-9]{8}$/;
 const sessionKey = (id: string, name: string): string =>
   `sessions/v${APP_VERSION}/${id}/${name}`;
 
+// Resolved at startup (env or SSM via loadSecrets) — config.appPin snapshots
+// the env before the SSM fetch has run, so don't read it after boot.
+let appPin = config.appPin;
+
 function pinOk(req: http.IncomingMessage): boolean {
-  if (!config.appPin) return true; // no PIN configured (local dev)
+  if (!appPin) return true; // no PIN configured (local dev)
   const pin = req.headers["x-app-pin"];
   if (typeof pin !== "string") return false;
   const a = Buffer.from(pin);
-  const b = Buffer.from(config.appPin);
+  const b = Buffer.from(appPin);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 function send(res: http.ServerResponse, status: number, body: unknown): void {
   const json = JSON.stringify(body);
-  res.writeHead(status, { "content-type": "application/json" });
+  // no-store: the connect response carries the AADL cookie jar and submit
+  // responses carry account results — nothing here is cacheable.
+  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
   res.end(json);
+}
+
+// CSP is hash-based (the page is one inline <script>), so an injected script
+// won't run; blob: covers the encode worker and local photo previews.
+function cspFor(html: string): string {
+  const hashes = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(
+    (m) => `'sha256-${crypto.createHash("sha256").update(m[1]).digest("base64")}'`,
+  );
+  return [
+    "default-src 'self'",
+    `script-src ${hashes.join(" ") || "'none'"}`,
+    "style-src 'unsafe-inline'",
+    "img-src 'self' blob: data:",
+    "connect-src 'self'",
+    "worker-src blob:",
+    "frame-ancestors 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+  ].join("; ");
 }
 
 // Default 1MB cap; the inline-image routes (extract/escalate when store-images
@@ -376,13 +402,21 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
     // no-store: a phone-cached stale client silently dropped a whole field
     // batch's instrumentation once. The page is ~12KB; always fetch fresh.
+    const html = fs
+      .readFileSync(path.join(publicDir, "index.html"), "utf8")
+      .replaceAll("{{VERSION}}", APP_VERSION);
     res.writeHead(200, {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
+      "content-security-policy": cspFor(html),
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "strict-origin-when-cross-origin",
+      // Also covers the raw Function URL (the CloudFront bypass) — both
+      // origins are HTTPS-only in the field; browsers ignore HSTS over http.
+      "strict-transport-security": "max-age=31536000",
     });
-    res.end(
-      fs.readFileSync(path.join(publicDir, "index.html"), "utf8").replaceAll("{{VERSION}}", APP_VERSION),
-    );
+    res.end(html);
     return;
   }
   if (req.method === "GET" && url.pathname === "/favicon.ico") {
@@ -420,14 +454,25 @@ const server = http.createServer(async (req, res) => {
       err instanceof SyntaxError
     ) {
       send(res, 400, { error: msg });
+    } else if (err instanceof AadlError) {
+      // Curated user-facing aadl.org outcomes (login rejected, form drift, …).
+      // Not 401 — the client treats 401 as "PIN rejected" and resets to the
+      // PIN screen.
+      send(res, 502, { error: msg });
     } else {
       console.error(`${req.method} ${url.pathname} failed:`, err);
-      send(res, 500, { error: msg });
+      send(res, 500, { error: "internal error" }); // details stay in the log
     }
   }
 });
 
-server.listen(config.appPort, () => {
-  console.log(`app v${APP_VERSION} listening on http://localhost:${config.appPort}`);
-  console.log(`  bucket=${config.sessionsBucket || "(unset!)"} pin=${config.appPin ? "set" : "OFF"}`);
-});
+(async () => {
+  // On Lambda this pulls APP_PIN/GCP_SA_KEY_JSON from SSM before the Web
+  // Adapter sees the port open; locally it's a no-op (env/.env wins).
+  await loadSecrets();
+  appPin = process.env.APP_PIN ?? "";
+  server.listen(config.appPort, () => {
+    console.log(`app v${APP_VERSION} listening on http://localhost:${config.appPort}`);
+    console.log(`  bucket=${config.sessionsBucket || "(unset!)"} pin=${appPin ? "set" : "OFF"}`);
+  });
+})();

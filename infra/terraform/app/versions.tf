@@ -16,6 +16,7 @@ terraform {
   backend "s3" {
     key          = "aadl-sg/app.tfstate"
     use_lockfile = true
+    encrypt      = true
   }
 }
 

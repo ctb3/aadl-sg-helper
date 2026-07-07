@@ -17,16 +17,29 @@ resource "aws_iam_policy" "app_boundary" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "Bedrock"
-        Effect   = "Allow"
-        Action   = ["bedrock:InvokeModel"]
-        Resource = "*"
+        # Anthropic only: cross-region inference profiles resolve to regional
+        # foundation models, so both ARN shapes are required.
+        Sid    = "Bedrock"
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel"]
+        Resource = [
+          "arn:aws:bedrock:*::foundation-model/anthropic.*",
+          "arn:aws:bedrock:*:${local.account_id}:inference-profile/us.anthropic.*",
+        ]
       },
       {
         Sid      = "SessionObjects"
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject"]
         Resource = "arn:aws:s3:::aadl-sg-sessions-*/sessions/*"
+      },
+      {
+        # Cold-start secret fetch (src/app/secrets.ts) — the secrets no longer
+        # ride the Lambda env, so the boundary must not cap the runtime read.
+        Sid      = "SecretsRead"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
+        Resource = "arn:aws:ssm:${var.region}:${local.account_id}:parameter/aadl-sg/*"
       },
       {
         # Runtime feature-flag reads (src/app/flags.ts). Without this the
@@ -192,6 +205,7 @@ resource "aws_iam_role_policy" "ci" {
           "s3:ListBucket",
           "s3:Get*",
           "s3:PutBucketCORS",
+          "s3:PutBucketPolicy",
           "s3:PutBucketPublicAccessBlock",
           "s3:PutBucketTagging",
           "s3:PutBucketVersioning",

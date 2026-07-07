@@ -179,7 +179,9 @@ const server = http.createServer((req, res) => {
   res.writeHead(404).end("not found");
 });
 
-server.listen(config.labelPort, () => {
+// Loopback only: this serves the private photo set with no auth — keep it off
+// the LAN. (npm runs Windows node, so the Windows browser still reaches it.)
+server.listen(config.labelPort, "127.0.0.1", () => {
   console.log(`Labeler running: http://localhost:${config.labelPort}`);
   console.log(`Images: ${config.imagesDir}`);
   console.log(`Labels: ${config.labelsPath}`);

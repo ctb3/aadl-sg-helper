@@ -117,7 +117,15 @@ phone-cached stale client once silently dropped a batch's instrumentation.
 Accounts (us-east-2, Terraform in infra/terraform/, OIDC from GitHub — no
 long-lived keys): TEST 825555019530, PROD 766253192238; old account
 619467956318 was torn down 2026-07-05. Secrets (APP_PIN, GCV key) live in
-each account's SSM under /aadl-sg/.
+each account's SSM under /aadl-sg/ and are fetched at cold start
+(src/app/secrets.ts; the Lambda env carries only the parameter names — never
+put secret values back into lambda_env/TF state). Security pass (2026-07-07):
+outbound aadl.org requests refuse any redirect off *.aadl.org/https (cookie
+containment, src/app/aadl.ts assertAllowedUrl); GET / ships a hash-based CSP +
+security headers and API responses are no-store (server.ts cspFor); unknown
+500s return a generic message (user-facing aadl.org outcomes are AadlError →
+502 — the client treats 401 as "PIN rejected", so never use 401 for them);
+the labeler binds 127.0.0.1.
 Custom domains (v0.4.0): prod https://aadlcode.ctb3.net, test
 https://aadlcode-test.ctb3.net — CloudFront in front of the Function URL
 (which stays public as a debugging bypass; PIN gates both). Per-env hosted
@@ -130,7 +138,9 @@ x-amz-content-sha256 on POSTs.
 Gotchas burned in already: Lambda rejects BuildKit attestation manifests
 (build with --provenance=false --sbom=false); the Function URL needs a
 public lambda:InvokeFunction grant besides InvokeFunctionUrl (PIN still holds
-either way); the Function URL + its two permissions must apply serially
+either way) — since 2026-07-07 both grants carry the FunctionUrlAuthType=NONE
+condition so the bare Invoke API is closed (if the URL ever 403s again, drop
+the condition on public-invoke first); the Function URL + its two permissions must apply serially
 (concurrent AddPermission → 409); GitHub jobs with `environment:` present
 OIDC sub `repo:…:environment:<name>` not `ref:…` (CI-role trust accepts
 both); Android Chrome throttles main-thread canvas work after returning

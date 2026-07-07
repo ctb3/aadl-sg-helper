@@ -21,9 +21,26 @@ const UA = "aadl-sg-helper (personal Summer Game assistant)";
 const TIMEOUT_MS = 20_000;
 const MAX_REDIRECTS = 5;
 
-export class AuthExpiredError extends Error {
+/** User-facing aadl.org outcomes (login rejected, form drift, …) — the server
+ * relays these messages to the client; anything else stays a generic 500. */
+export class AadlError extends Error {}
+
+export class AuthExpiredError extends AadlError {
   constructor() {
     super("AADL session expired — reconnect the account");
+  }
+}
+
+// Outbound containment: every hop must stay on aadl.org (or a subdomain, e.g.
+// play.aadl.org) over the BASE scheme — a redirect elsewhere would otherwise
+// be followed with the user's live session cookies attached.
+const BASE_URL = new URL(config.aadlBaseUrl);
+function assertAllowedUrl(url: string): void {
+  const u = new URL(url);
+  const sameSite = u.hostname === BASE_URL.hostname || u.hostname.endsWith(`.${BASE_URL.hostname}`);
+  const schemeOk = u.protocol === "https:" || u.protocol === BASE_URL.protocol;
+  if (!sameSite || !schemeOk) {
+    throw new Error(`refusing to contact ${u.protocol}//${u.hostname} (off ${BASE_URL.hostname})`);
   }
 }
 
@@ -71,6 +88,7 @@ async function request(jar: CookieJar, method: "GET" | "POST", url: string, form
   let currentMethod = method;
   let body = form;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    assertAllowedUrl(currentUrl);
     const headers: Record<string, string> = { "user-agent": UA };
     if (jar.size) headers.cookie = [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
     if (body) headers["content-type"] = "application/x-www-form-urlencoded";
@@ -121,7 +139,7 @@ export async function aadlLogin(username: string, password: string): Promise<Coo
   const jar: CookieJar = new Map();
   const loginPage = await request(jar, "GET", `${BASE}/user/login`);
   const buildId = formBuildId(loginPage.html);
-  if (!buildId) throw new Error("could not parse the AADL login form");
+  if (!buildId) throw new AadlError("could not parse the AADL login form");
 
   const res = await request(
     jar,
@@ -138,10 +156,10 @@ export async function aadlLogin(username: string, password: string): Promise<Coo
   );
   if (isLoginPage(res)) {
     const text = pageText(res.html);
-    if (/Unrecognized username or password/i.test(text)) throw new Error("AADL rejected the username or password");
-    if (/too many failed login attempts/i.test(text)) throw new Error("AADL login temporarily blocked (too many attempts) — try later");
-    if (/antibot/i.test(res.html)) throw new Error("AADL login blocked by an anti-bot check");
-    throw new Error("AADL login failed (unexpected response)");
+    if (/Unrecognized username or password/i.test(text)) throw new AadlError("AADL rejected the username or password");
+    if (/too many failed login attempts/i.test(text)) throw new AadlError("AADL login temporarily blocked (too many attempts) — try later");
+    if (/antibot/i.test(res.html)) throw new AadlError("AADL login blocked by an anti-bot check");
+    throw new AadlError("AADL login failed (unexpected response)");
   }
   return jar;
 }
@@ -164,9 +182,9 @@ export async function fetchRedeemForm(jar: CookieJar): Promise<RedeemForm> {
   if (isLoginPage(page)) throw new AuthExpiredError();
 
   const pid = Number(attr(page.url, /\/summergame\/player\/(\d+)\/gamecode/));
-  if (!pid) throw new Error(`unexpected redeem page: ${page.url} (add a player to the account at aadl.org first?)`);
+  if (!pid) throw new AadlError(`unexpected redeem page: ${page.url} (add a player to the account at aadl.org first?)`);
   const buildId = formBuildId(page.html);
-  if (!buildId) throw new Error("could not parse the redeem form");
+  if (!buildId) throw new AadlError("could not parse the redeem form");
 
   // pids[] checkboxes exist only when the account has >1 player; each input's
   // <label for=…> carries the player name.

@@ -32,14 +32,27 @@ resource "aws_iam_role_policy" "app_access" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = ["bedrock:InvokeModel"]
-        Resource = "*"
+        # Anthropic only: cross-region inference profiles resolve to regional
+        # foundation models, so both ARN shapes are required.
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel"]
+        Resource = [
+          "arn:aws:bedrock:*::foundation-model/anthropic.*",
+          "arn:aws:bedrock:*:${local.account_id}:inference-profile/us.anthropic.*",
+        ]
       },
       {
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject"]
         Resource = "${aws_s3_bucket.sessions.arn}/sessions/*"
+      },
+      {
+        # Cold-start secret fetch (src/app/secrets.ts). No kms:Decrypt needed:
+        # the aws/ssm managed key's policy already allows account principals
+        # to decrypt via the SSM service.
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
+        Resource = "arn:aws:ssm:${var.region}:${local.account_id}:parameter/aadl-sg/*"
       },
       {
         Effect = "Allow"

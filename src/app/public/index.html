@@ -105,7 +105,7 @@
     <div class="card">
       <p>Enter the access PIN:</p>
       <input type="password" id="pin-input" autocomplete="off" inputmode="text">
-      <p class="err" id="pin-err" hidden>PIN rejected — try again.</p>
+      <p class="err" id="pin-err" hidden>PIN rejected, try again.</p>
     </div>
     <button class="primary big" id="pin-save">Continue</button>
   </div>
@@ -113,42 +113,52 @@
   <div class="view" id="v-home">
     <button class="primary big" id="btn-photo">&#128247; Photograph a sign</button>
     <input type="file" id="file" accept="image/*" capture="environment" hidden>
-    <p class="tag">Get close — fill the frame with the sign, and keep other text
-    (house numbers, bin labels) out of the shot.</p>
     <div class="card">
-      <div id="acct-list"><p class="tag">No AADL account connected — codes will
+      <div id="acct-list"><p class="tag">No AADL account connected. Codes will
       open aadl.org for you to submit yourself.</p></div>
       <button class="ghost wide" id="btn-connect">+ Connect AADL account</button>
       <p class="tag" id="auto-note" hidden>Codes are read and submitted automatically
-      for every checked player — you only step in if AADL rejects a read.</p>
+      for every checked player.</p>
     </div>
   </div>
 
   <div class="view" id="v-connect">
     <div class="card" id="c-warn">
       <p><b>&#9888;&#65039; Before you type your library password&hellip;</b></p>
+      <p>You should never enter your password for any website on a
+      different website, but that's exactly what's happening here.
+      Essentially, by doing so you're taking my word for it that I'm not
+      stealing it. I promise I'm not! If you choose to continue, you're
+      accepting that risk. But again, I don't know what I'd even do with
+      your library password&hellip; rent a book? Check out the
+      <a href="#" id="c-about-link">About section</a> if you want to learn
+      more about me.</p>
+      <p>If you'd rather not, that's completely fine too! Everything still
+      works without an account. The app reads the code from your photo and
+      hands you a prefilled aadl.org link so you can submit it yourself,
+      signed in on your own browser. But in my opinion the fully automated
+      mode is the most fun! &#9889;</p>
       <p>Your password passes through this app's server once to log in to
-      aadl.org. It is not stored or logged anywhere — but you're taking the
-      operator's word for that, and that's an inherently insecure thing to
-      ask of you.</p>
-      <p>If you'd rather not, that's completely fine: everything still works
-      without an account — the app reads the code from your photo and hands
-      you a prefilled aadl.org link so you can submit it yourself, signed in
-      on your own browser.</p>
+      aadl.org and is never stored or logged anywhere. Once logged in, aadl
+      hands the session cookies back to my app, which stores them as normal
+      in your device's localStorage. Every request the app makes to aadl
+      from then on proxies those session cookies back to aadl. This lets
+      the app stay signed in like the normal website, without this app
+      having to sign in repeatedly or ever store passwords. You can see the
+      code on my
+      <a href="https://github.com/ctb3/aadl-sg-helper" target="_blank" rel="noopener">GitHub</a>.</p>
     </div>
-    <button class="primary big" id="c-accept">I understand — continue</button>
+    <button class="primary big" id="c-accept">I understand</button>
     <div class="card cred" id="c-form" hidden>
-      <p>Log in with your aadl.org account. The password is used once to sign
-      in and is not stored anywhere — this phone keeps only the signed-in
-      session.</p>
+      <p>Log in with your aadl.org account.</p>
       <form id="c-cred" novalidate>
-        <p><input type="text" id="c-user" placeholder="Username or barcode"
+        <button class="ghost wide" id="c-reread">&#9888;&#65039; Read the warning again</button>
+        <p><input type="text" id="c-user" placeholder="Username or e-mail address"
           autocomplete="username" autocapitalize="none"></p>
         <p><input type="password" id="c-pass" placeholder="Password"
           autocomplete="current-password"></p>
       </form>
       <p class="err" id="c-err" hidden></p>
-      <button class="ghost wide" id="c-reread">&#9888;&#65039; Read the warning again</button>
     </div>
     <button class="primary big" id="c-connect" hidden>Connect</button>
     <button class="ghost" id="c-cancel">Cancel</button>
@@ -219,13 +229,17 @@
   <div class="view" id="v-howto">
     <div class="card">
       <p><b>How it works</b></p>
-      <p>&#128247; <b>Photograph a sign.</b> Get close — fill the frame with
-      the sign, and keep house numbers or bin labels out of the shot.</p>
+      <p>&#128247; <b>Photograph a sign.</b> Get as close as you can. Try to
+      fill the frame with the sign, and do your best to keep any other text
+      out of the shot (other signs, house numbers, etc.)</p>
       <p>&#128269; <b>The app reads the handwriting.</b> Most codes are read
-      instantly; tricky ones get a closer look from Claude.</p>
-      <p>&#127942; <b>Connect your AADL account</b> and codes are submitted
-      automatically for every player you check — or skip that, and you'll get
-      a prefilled aadl.org link to submit each code yourself.</p>
+      quickly. Tricky ones get a closer look from Claude.</p>
+      <p>&#127942; <b>Connect your AADL account.</b> If you log in to your
+      AADL account, codes are submitted automatically for every player you
+      check. This makes the majority of codes completely automatic once you
+      snap the picture! Or if you don't want to log in, we'll still do our
+      best to read it, and you'll get a prefilled aadl.org link to submit
+      each code yourself.</p>
       <p>&#9997;&#65039; <b>If a read is wrong</b> or AADL rejects it, you can
       always fix the code by hand.</p>
     </div>
@@ -235,11 +249,18 @@
   <div class="view" id="v-about">
     <div class="card">
       <p><b>About</b></p>
-      <p>Point your camera at an AADL Summer Game lawn sign and this app reads
-      the handwritten code and submits it to your Summer Game account(s) — or
-      hands you a prefilled aadl.org link if you'd rather submit it yourself.</p>
-      <p>A personal project, not affiliated with the Ann Arbor District
-      Library. (More to come here.)</p>
+      <p>Hi! I'm Carl. &#128075; I'm a fellow Ann Arborite and fan of the
+      AADL Summer Game. I often pass signs while running or walking my dog
+      and don't always want to stop and type in the code. sometimes I'd
+      just take a picture to enter later. My roots are in software
+      development, so I always thought it'd be cool if there were an app
+      that just read the sign and submitted the code automatically. Well,
+      this is it! Having a computer read handwriting is a challenge, so
+      it's not perfect. </p>
+      <p><b>Note:</b> this is a personal project, I'm not affiliated with
+      the Ann Arbor District Library in any way. You should still hop over
+      to <a href="https://aadl.org" target="_blank" rel="noopener">aadl.org</a>
+      for all the other Summer Game content!</p>
     </div>
     <button class="ghost" id="a-back">&larr; Back</button>
   </div>
@@ -262,7 +283,7 @@ const validCode = (s) => norm(s).length > 0;
 
 let state = null;
 
-// Shown while the photo is being re-encoded — edit freely, one is picked at random.
+// Shown while the photo is being re-encoded
 const PREP_MESSAGES = [
   "Preparing image…"
 ];
@@ -333,7 +354,7 @@ function renderAccounts() {
   const accounts = getAccounts();
   const list = $("acct-list");
   if (!accounts.length) {
-    list.innerHTML = '<p class="tag">No AADL account connected — codes will open aadl.org for you to submit yourself.</p>';
+    list.innerHTML = '<p class="tag">No AADL account connected. Codes will open aadl.org for you to submit yourself.</p>';
   } else {
     list.replaceChildren(...accounts.map((acct, i) => {
       const div = document.createElement("div");
@@ -341,7 +362,7 @@ function renderAccounts() {
       const head = document.createElement("div");
       head.className = "acct-head";
       const name = document.createElement("b");
-      name.textContent = acct.label + (acct.expired ? " — session expired" : "");
+      name.textContent = acct.label + (acct.expired ? " (session expired)" : "");
       if (acct.expired) name.style.color = "var(--danger)";
       const btns = document.createElement("span");
       if (acct.expired) {
@@ -665,10 +686,10 @@ async function escalateBody() {
 // Shared tier-2 escalation: crop + Claude in one POST. The stall line names
 // the slow half — crop still uploading vs Claude thinking.
 async function callEscalate(lead) {
-  busy(lead, "Still sending the close-up — weak signal?");
+  busy(lead, "Still sending the close-up… weak signal?");
   const t = Date.now();
   const r = await apiUpload("/api/escalate", await escalateBody(), {
-    onSent: () => busy(lead, "Still working — tricky handwriting takes a moment…"),
+    onSent: () => busy(lead, "Still working… tricky handwriting takes a moment…"),
   });
   state.timings.escalateMs = Date.now() - t;
   state.timings.escalateServer = r.serverTimings;
@@ -690,7 +711,7 @@ async function presentResult(code) {
 async function showManual(notice) {
   const prefill = norm((state.tier2 && state.tier2.code) || state.tier1.code || "");
   $("m-head").textContent = prefill
-    ? "Our best guess — submit it, or fix it here:"
+    ? "Our best guess! submit it, or fix it here:"
     : "Type the code as written:";
   $("m-note").textContent = notice || "";
   $("m-note").hidden = !notice;
@@ -719,7 +740,7 @@ function prefetchSession() {
 async function onPhoto(file) {
   try {
     state = { t0: Date.now(), verdicts: [], timings: {} };
-    busy(prepMsg(), "Still preparing — the phone is slow after the camera…");
+    busy(prepMsg(), "Still preparing… the phone is slow after the camera…");
     let t = Date.now();
     const jpeg = await toJpeg(file);
     state.jpegBlob = jpeg.blob; // localCrop's worker-less fallback source
@@ -751,7 +772,7 @@ async function onPhoto(file) {
       state.tier2 = null;
       state.cropDataUrl = "data:image/jpeg;base64," + (await blobToB64(jpeg.blob));
       state.verdicts.push({ tier: 0, code: "", action: "extract_off" });
-      return showManual("Sorry — automatic code reading is switched off right now. Type the code from the sign:");
+      return showManual("Sorry! automatic code reading is switched off right now. Type the code from the sign:");
     }
 
     // One network pass: the photo rides inline in extract (the old presigned
@@ -771,11 +792,11 @@ async function onPhoto(file) {
 
     // Upload and read are one POST; the upload events split the status line
     // so a slow phase names itself (uplink stall vs GCV/server stall).
-    busy("Uploading photo…", "Still uploading — weak signal?");
+    busy("Uploading photo…", "Still uploading… weak signal?");
     t = Date.now();
     const res = await apiUpload("/api/extract", extractBody, {
       onProgress: (f) => { $("busy-msg").textContent = "Uploading photo… " + Math.round(f * 100) + "%"; },
-      onSent: () => busy("Reading the sign…", "Still reading — hang on…"),
+      onSent: () => busy("Reading the sign…", "Still reading… hang on…"),
     });
     state.timings.extractMs = Date.now() - t;
     state.timings.server = res.serverTimings; // per-step server breakdown → verdict.json
@@ -906,7 +927,7 @@ function hiddenMessage(results) {
 
 async function submitToAadl(code) {
   const accounts = activeAccounts();
-  busy("Submitting to AADL…", "Still submitting — aadl.org is slow right now…");
+  busy("Submitting to AADL…", "Still submitting… aadl.org is slow right now…");
   const t = Date.now();
   const res = await api("/api/submit", {
     sessionId: state.sessionId,
@@ -937,11 +958,11 @@ async function submitToAadl(code) {
       state.verdicts.push({ tier: 2, code: newCode, action: "auto_submitted" });
       return finish(newCode, "tier2_auto");
     }
-    return showManual('AADL didn’t recognize “' + code + '” — check it against the photo:');
+    return showManual('AADL didn’t recognize “' + code + '”. Check it against the photo:');
   }
   if (rejected && ocrCode) {
     state.verdicts.push({ tier: state.presented.tier, code, action: "aadl_rejected" });
-    return showManual('AADL didn’t recognize “' + code + '” — check it against the photo:');
+    return showManual('AADL didn’t recognize “' + code + '”. Check it against the photo:');
   }
 
   $("s-code").textContent = code;
@@ -1017,7 +1038,7 @@ $("m-submit").onclick = () => {
 };
 $("d-copy").onclick = async () => {
   try { await navigator.clipboard.writeText($("d-code").textContent); $("d-copy").textContent = "Copied ✓"; }
-  catch { $("d-copy").textContent = "Copy blocked — long-press the code"; }
+  catch { $("d-copy").textContent = "Copy blocked. Long-press the code"; }
   setTimeout(() => { $("d-copy").textContent = "Copy code"; }, 1600);
 };
 $("d-new").onclick = home;
@@ -1078,6 +1099,7 @@ function overlay(viewId) {
   show(viewId);
 }
 $("f-about").onclick = (e) => { e.preventDefault(); overlay("v-about"); };
+$("c-about-link").onclick = (e) => { e.preventDefault(); overlay("v-about"); };
 $("f-howto").onclick = (e) => { e.preventDefault(); overlay("v-howto"); };
 $("a-back").onclick = () => show(overlayReturn);
 $("h-done").onclick = () => { localStorage.setItem("howtoSeen", "1"); show(overlayReturn); };

@@ -23,10 +23,17 @@ export const READER_USER =
   "- People often DOODLE small drawings next to or around the code (a baseball, " +
   "heart, star, smiley, underline). Drawings are NOT characters — do not " +
   "transcribe them. In particular, a round shape with interior detail (stitch " +
-  "marks, a face, a pattern) is a drawing, not an O or 0.\n" +
+  "marks, a face, a pattern) is a drawing, not an O or 0. EXCEPTION: when such " +
+  "a drawing sits INLINE with the lettering — between glyphs, on the same " +
+  "baseline, at glyph size — the writer may have drawn it AS a character " +
+  "(e.g. a soccer ball as an O). Still keep it out of `code`, but add the " +
+  "full reading that includes it to `alternatives`.\n" +
   "- Signs are reused every year and old codes get cleaned off. You may see " +
   "faint GHOST strokes of a previous code. Transcribe only the bold, " +
   "high-contrast current lettering; ignore faint remnants.\n" +
+  "- When the same letter repeats consecutively (OO, OOO, LLL), COUNT the " +
+  "repeats one stroke at a time — undercounting a run is a common error. If " +
+  "unsure between two counts, put the other count in `alternatives`.\n" +
   "- If a glyph is genuinely ambiguous (e.g. M vs N, U vs V, 5 vs S, 0 vs O), " +
   "compare it against how this writer formed the same letters elsewhere in the " +
   "code — writers are consistent. Decide on letterFORM evidence only, never on " +

@@ -53,6 +53,7 @@
   @keyframes r { to { transform:rotate(360deg); } }
   @keyframes pulse { 50% { opacity:.35; } }
   .busy-msg { text-align:center; color:var(--muted); }
+  .busy-sub { text-align:center; color:var(--muted); font-size:.85rem; opacity:.8; }
   input[type=text], input[type=password] {
     font-size:1.4rem; padding:.7rem; width:100%; border-radius:var(--r-el);
     border:1px solid var(--line-strong); background:var(--card);
@@ -168,6 +169,7 @@
   <div class="view" id="v-busy">
     <div class="spin" aria-hidden="true"></div>
     <p class="busy-msg" id="busy-msg" aria-live="polite">Working…</p>
+    <p class="busy-sub" id="busy-sub" aria-live="polite" hidden></p>
   </div>
 
   <div class="view" id="v-result">
@@ -262,20 +264,34 @@ let state = null;
 
 // Shown while the photo is being re-encoded — edit freely, one is picked at random.
 const PREP_MESSAGES = [
-  "Warming up the code goggles…",
-  "Squinting at the handwriting…",
-  "Consulting the marker-fume oracle…",
-  "Deciphering yard-sign penmanship…",
-  "Enhance… enhance… enhance…",
-  "Untangling loops from lowercase L's…",
+  "Preparing image…"
 ];
 const prepMsg = () => PREP_MESSAGES[Math.floor(Math.random() * PREP_MESSAGES.length)];
 
 function show(view, busyMsg) {
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   $(view).classList.add("active");
+  // Any view change ends the current busy phase: kill its stall watchdog.
+  clearTimeout(stallTimer);
+  $("busy-sub").hidden = true;
   if (busyMsg) $("busy-msg").textContent = busyMsg;
   if (view === "v-pin") $("pin-input").focus();
+}
+
+// Per-phase busy screen: primary line plus a "still working" second line that
+// appears only when the phase overruns STALL_MS. Slow phone uplink and
+// GCV/Claude tail spikes are field-normal; silence past a few seconds reads
+// as a hang, and the second line is how we see WHICH step is the slow one.
+const STALL_MS = 4000;
+let stallTimer = null;
+function busy(msg, stallMsg) {
+  show("v-busy", msg);
+  if (stallMsg) {
+    stallTimer = setTimeout(() => {
+      $("busy-sub").textContent = stallMsg;
+      $("busy-sub").hidden = false;
+    }, STALL_MS);
+  }
 }
 
 function fail(err) {
@@ -410,6 +426,39 @@ async function api(path, body) {
     throw new Error(e.error || "HTTP " + r.status);
   }
   return r.json();
+}
+
+// XHR variant of api() for the big photo POST: fetch can't observe
+// request-body progress, XHR's upload events can. Same PIN/error semantics.
+// onProgress(fraction) fires while the body is in flight; onSent() when the
+// last byte is out the door (response latency after that is the server).
+function apiUpload(path, body, { onProgress, onSent } = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", path);
+    xhr.setRequestHeader("content-type", "application/json");
+    xhr.setRequestHeader("x-app-pin", localStorage.getItem("pin") || "");
+    xhr.responseType = "json";
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    }
+    if (onSent) xhr.upload.onloadend = () => onSent();
+    xhr.onerror = () => reject(new Error("network error"));
+    xhr.ontimeout = () => reject(new Error("network timeout"));
+    xhr.onload = () => {
+      if (xhr.status === 401) {
+        localStorage.removeItem("pin");
+        $("pin-err").hidden = false;
+        show("v-pin");
+        return reject({ pinRejected: true });
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        return reject(new Error((xhr.response && xhr.response.error) || "HTTP " + xhr.status));
+      }
+      resolve(xhr.response);
+    };
+    xhr.send(JSON.stringify(body || {}));
+  });
 }
 
 // Re-encode client-side to the GCV input size directly: uniform JPEG
@@ -613,6 +662,20 @@ async function escalateBody() {
   return { sessionId: state.sessionId, crop: await ensureCrop(), keep: state.storeImages };
 }
 
+// Shared tier-2 escalation: crop + Claude in one POST. The stall line names
+// the slow half — crop still uploading vs Claude thinking.
+async function callEscalate(lead) {
+  busy(lead, "Still sending the close-up — weak signal?");
+  const t = Date.now();
+  const r = await apiUpload("/api/escalate", await escalateBody(), {
+    onSent: () => busy(lead, "Still working — tricky handwriting takes a moment…"),
+  });
+  state.timings.escalateMs = Date.now() - t;
+  state.timings.escalateServer = r.serverTimings;
+  state.tier2 = r.tier2;
+  return r;
+}
+
 // Only ever shows the tier-1 read, and only on the no-account path — with an
 // account connected everything auto-submits, and Claude's read goes straight
 // to the manual screen as its prefill.
@@ -656,7 +719,7 @@ function prefetchSession() {
 async function onPhoto(file) {
   try {
     state = { t0: Date.now(), verdicts: [], timings: {} };
-    show("v-busy", prepMsg());
+    busy(prepMsg(), "Still preparing — the phone is slow after the camera…");
     let t = Date.now();
     const jpeg = await toJpeg(file);
     state.jpegBlob = jpeg.blob; // localCrop's worker-less fallback source
@@ -706,9 +769,14 @@ async function onPhoto(file) {
     state.timings.uploadMs = Date.now() - t;
     state.timings.uploadBytes = jpeg.blob.size;
 
-    show("v-busy", "Reading the sign…");
+    // Upload and read are one POST; the upload events split the status line
+    // so a slow phase names itself (uplink stall vs GCV/server stall).
+    busy("Uploading photo…", "Still uploading — weak signal?");
     t = Date.now();
-    const res = await api("/api/extract", extractBody);
+    const res = await apiUpload("/api/extract", extractBody, {
+      onProgress: (f) => { $("busy-msg").textContent = "Uploading photo… " + Math.round(f * 100) + "%"; },
+      onSent: () => busy("Reading the sign…", "Still reading — hang on…"),
+    });
     state.timings.extractMs = Date.now() - t;
     state.timings.server = res.serverTimings; // per-step server breakdown → verdict.json
     state.tier1 = res.tier1;
@@ -746,12 +814,7 @@ async function onPhoto(file) {
     // With Claude circuit-broken (mode gcv) tier 2 never runs — the manual
     // screen with the tier-1 read prefilled is the fallback.
     if (!state.tier2 && state.extractMode === "full") {
-      show("v-busy", "Asking Claude for a closer look…");
-      t = Date.now();
-      const r = await api("/api/escalate", await escalateBody());
-      state.timings.escalateMs = Date.now() - t;
-      state.timings.escalateServer = r.serverTimings;
-      state.tier2 = r.tier2;
+      await callEscalate("Asking Claude for a closer look…");
     }
     const code2 = state.tier2 ? norm(state.tier2.code) : "";
     if (autoMode()) {
@@ -774,12 +837,7 @@ async function reject() {
   // Claude circuit-broken: "trying harder" means the human fixes it by hand.
   if (state.extractMode !== "full") return showManual();
   try {
-    show("v-busy", "Asking Claude for a closer look…");
-    const t = Date.now();
-    const r = await api("/api/escalate", await escalateBody());
-    state.timings.escalateMs = Date.now() - t;
-    state.timings.escalateServer = r.serverTimings;
-    state.tier2 = r.tier2;
+    await callEscalate("Asking Claude for a closer look…");
     showManual();
   } catch (err) { fail(err); }
 }
@@ -848,7 +906,7 @@ function hiddenMessage(results) {
 
 async function submitToAadl(code) {
   const accounts = activeAccounts();
-  show("v-busy", "Submitting to AADL…");
+  busy("Submitting to AADL…", "Still submitting — aadl.org is slow right now…");
   const t = Date.now();
   const res = await api("/api/submit", {
     sessionId: state.sessionId,
@@ -873,12 +931,7 @@ async function submitToAadl(code) {
   if (rejected && ocrCode && !state.tier2 && !state.autoEscalated && state.extractMode === "full") {
     state.autoEscalated = true;
     state.verdicts.push({ tier: state.presented.tier, code, action: "aadl_rejected" });
-    show("v-busy", "AADL didn't recognize it, asking Claude…");
-    const t2 = Date.now();
-    const r = await api("/api/escalate", await escalateBody());
-    state.timings.escalateMs = Date.now() - t2;
-    state.tier2 = r.tier2;
-    state.timings.escalateServer = r.serverTimings;
+    const r = await callEscalate("AADL didn't recognize it, asking Claude…");
     const newCode = norm(r.tier2.code);
     if (newCode && newCode !== code) {
       state.verdicts.push({ tier: 2, code: newCode, action: "auto_submitted" });

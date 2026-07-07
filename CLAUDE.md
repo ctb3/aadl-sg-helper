@@ -80,7 +80,11 @@ the CLIENT from its local ORIGINAL photo at the bbox extract returns
 cropDataUrl payload, and gate-fail auto-escalation is the client calling
 /api/escalate with its crop — 95.2% vs 92.1% from upload-res crops, n=63).
 The old presigned-PUT + server-S3-GET transport survives one release for
-stale clients (handleSession still signs an uploadUrl). GCV calls are hedged
+stale clients (handleSession still signs an uploadUrl). The busy screen
+names the slow step (v0.5.2): /api/extract and /api/escalate go over XHR so
+upload progress is visible ("Uploading photo… NN%"), and every phase arms a
+4s stall watchdog that adds a second line (weak signal vs slow read vs slow
+aadl.org) — field spikes were unattributable from the phone before this. GCV calls are hedged
 (src/core/readers/gcv.ts, GCV_HEDGE_MS default 1500, ≤0 disables): GCV showed 6-30s
 service-side latency spikes in the field, and a duplicate $0.0015 attempt —
 fired only when the first is slow — caps that tail. Hedge outcome (fired,
@@ -180,6 +184,10 @@ manual prefilled** = 97.4% end-to-end, <$0.003/img avg, 87% instant (0.4s).
 - Known open failure: scene text — GCV once picked a house number at 0.99 conf,
   so confidence does NOT gate localization errors. Idea if it recurs: require
   the chosen line to sit spatially among the phrase-matched printed lines.
+  The sibling failure (headline fragments like "WE" / "WEPLAYGAMETHE"
+  surviving subtraction and outranking the code at 0.89-0.94 conf, prod ×2)
+  is FIXED: any line whose tokens are all headline vocab is printed
+  (HEADLINE_WORDS in postproc.ts). Scene text itself is still open.
 - Prompt-hardening that worked (in-sample): doodles-aren't-letters, ignore
   ghost strokes of cleaned-off codes, resolve ambiguous glyphs by the writer's
   own letterforms. Caveat everywhere: n=39, thresholds tuned while looking.
@@ -208,6 +216,30 @@ Speed push (2026-07-06, n=63 incl. harder field photos — gate t=0.5 now
   95%, tier2 6/6, every wrong prefill oracle-caught. GCV service spikes
   (6-30s, two clusters, cleared on their own — external) → the hedge above.
   Lambda memory bump judged NOT worth it: only ~96ms/extract is CPU+S3.
+
+Prod field batch (v0.5.1, 2026-07-07, 30 sessions — 13 = the 07-06 GCV
+episode, 17 fresh):
+
+- Latency healthy: fresh-batch GCV 310-535ms, hedge never fired, server total
+  ~0.5s. Client extract "spikes" (3.6-11.6s) were pure cellular uplink of the
+  ~870KB inline POST — external, like the GCV episode. No server lever.
+- Gate-passed tier-1 rejects are NOT rare in the field: 6/26 (vs the ≈1-in-90
+  estimate from friendly photos). All caught by approve-or-oracle; the two
+  UNRECOVERED losses were both wrong-line localization (headline picked over
+  the code) where the user then approved tier-2's read of the wrong crop and
+  the oracle rejected it (truth-by-approval means those sessions score as
+  phantom tier-2 ✓ in sessions-report — read `not_recognized` endings as
+  suspect labels). Both real codes (QUADCATS, JEWEL) were in GCV's raw words
+  all along → HEADLINE_WORDS fix above; replayed + re-baked, QUADCATS now
+  tier1-instant at 0.86 and JEWEL's line crops correctly (tier2 reads it).
+- Tier-2 transcription when the crop was right: 5/7. Misses: dropped-H
+  (OVERTHEEDGE — correct code WAS in `alternatives`; the manual-screen chips
+  earn their keep) and repeated-O undercount (GOOOAL vs GOOOOAL, one O drawn
+  as a soccer ball). Prompt now routes drawing-as-character and count-doubt
+  readings into `alternatives` (offline 61/67, no regressions on shared
+  images); GOOOOAL itself STILL misses — Claude undercounts the O-run even
+  when it explicitly sees the ball. Known-open; don't prompt-tune it further
+  on n=1 (second attempt invented letters).
 
 ## Environment (WSL + Windows)
 

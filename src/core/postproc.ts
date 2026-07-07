@@ -108,6 +108,15 @@ export const SIGN_PHRASES: string[] = [
 const PHRASE_SIM_THRESHOLD = 0.7;
 const PHRASE_COVERAGE_THRESHOLD = 0.6;
 
+// The big headline is the tallest PRINTED text on the sign, and OCR splits or
+// merges it across visual lines in arbitrary order ("WE", "WE PLAY GAME THE")
+// — fragments too short for the includes() check (< 3 chars) or too jumbled
+// for similarity/coverage. A line made ENTIRELY of headline words is printed.
+// Accepted blind spot, same class as a handwritten "SUMMERGAME": a code that
+// IS one of these words gets subtracted. (Observed twice in prod v0.5.1:
+// "WE" at conf 0.94 and "WEPLAYGAMETHE" at 0.89 outranked the real code.)
+const HEADLINE_WORDS = new Set(["WE", "PLAY", "THE", "SUMMER", "GAME"]);
+
 // All 6-grams of the printed copy, for coverage matching: OCR sometimes merges
 // several printed lines into one ("ADLORGWEPLAYTHEPLAYAADLORG…"), which fuzzy
 // whole-line matching misses but n-gram coverage catches.
@@ -145,6 +154,10 @@ export function isPrintedLine(text: string): boolean {
 
   // Mostly made of known printed copy (handles merged/concatenated lines).
   if (phraseCoverage(a) >= PHRASE_COVERAGE_THRESHOLD) return true;
+
+  // Every token is a headline word (any order, any subset).
+  const headlineToks = text.toUpperCase().split(/\s+/).map(alnum).filter(Boolean);
+  if (headlineToks.length && headlineToks.every((t) => HEADLINE_WORDS.has(t))) return true;
 
   // Upside-down ring text misreads repeat the same token ("held 6101pee held
   // 6101pee held…"). Repeating the same token 3+ times is ring text, not a code.

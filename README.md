@@ -1,56 +1,56 @@
 # aadl-sg-helper
 
-AADL Summer Game code helper — a deployed **field-test app** that reads the
-handwritten code off a Summer Game yard sign from a phone photo and submits it
-to aadl.org, plus the **measurement harness** (bake-off) that proved the
-extraction pipeline.
+[![CI](https://github.com/ctb3/aadl-sg-helper/actions/workflows/ci.yml/badge.svg)](https://github.com/ctb3/aadl-sg-helper/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-- Prod: <https://aadlcode.ctb3.net> · Test: <https://aadlcode-test.ctb3.net>
-  (access gated by a shared PIN)
+AADL Summer Game code helper. a mobile web app that reads the handwritten
+code off an AADL Summer Game yard sign from a phone photo and automatically
+submits it to aadl.org. Built out of inherent laziness, to save myself
+having to type in 12 characters manually.
 
-> Governing constraint: codes are **user-generated** — charset `[A-Z0-9]`,
-> **no length limit** (signup caps new codes at 12 chars, but grandfathered
-> longer codes are live; a 14-char code was redeemed in the field — never add
-> a length check), no dictionary. Faithful glyph reading is the goal — the LLM
-> prompt forbids "correcting" messy handwriting toward real words. There is no
-> validation oracle at extraction time; ground truth comes only from
-> hand-labeling (the aadl.org submission response acts as a weak oracle after
-> the fact).
+## How it works
 
-## The pipeline (proven by the bake-off)
+Runs in a Docker container in a Lambda in AWS.
 
 1. **Tier 1 — Google Cloud Vision** on a 2400px q0.7 JPEG posted inline.
    Post-processing isolates the code line: subtract the sign's printed
-   phrases, take the tallest remaining line (glyph-box heights), gate on
-   min word confidence ≥ 0.5.
+   phrases, take the tallest remaining line, gate on min word confidence.
 2. **Tier 2 — Claude on a crop** when the gate fails or the user rejects:
    the client cuts a high-res crop from its original photo at the line bbox
    tier 1 returned, and Claude (Bedrock) transcribes it glyph-by-glyph.
-3. **Manual prefilled** — the best guess lands in an editable field;
-   approve-before-submit is the default.
+3. **Manual prefilled** — the best guess lands in an editable field, to be
+   tweaked before submitting.
 4. **Submit** to aadl.org for every connected account/player (or a `?text=`
    handoff link when no account is connected).
 
-Measured: 97.4% end-to-end (n=39), tier-2-on-crop 95.2% (n=63), ~87% of
-photos resolve instantly on tier 1 at <$0.003/img average. Details and the
-full findings log live in `CLAUDE.md` and `out/runs/postproc-analysis.md`
-(generated).
+## Usage
+
+Local dev server:
+
+```bash
+npm run app                     # serves at http://localhost:8080
+```
+
+Open it, and either connect an aadl.org account or use it credential-free.
+Take/upload a sign photo → review the extracted code → submit.
+
+Smoke-test a running deployment:
+
+```bash
+npx tsx infra/apitest.ts [url]        # free-path checks
+npx tsx infra/apitest.ts --full [url] # exercises paid readers too
+```
 
 ## Repo layout
 
 ```
-src/app/       Deployed field-test app: server.ts (Lambda entrypoint, also
-               `npm run app` locally), pipeline.ts (tier1/tier2), aadl.ts
+src/app/       The app: server.ts (Lambda entrypoint, also `npm run app`
+               locally), pipeline.ts (tier1/tier2), aadl.ts
                (aadl.org login/submit client), flags.ts (AppConfig feature
                flags), sessions-report.ts (telemetry rollup CLI), public/.
 src/core/      Shared library: config, types, image ops, reader prompt,
-               GCV post-processing, scoring, Bedrock client, readers/
-               (claude, gcv — used by the app; nova, textract — bake-off
-               baselines only).
-src/harness/   Bake-off / offline CLIs: run (the matrix), analyze (offline
-               post-proc + cascade sim), tier2 (crop experiments), label
-               (browser labeler), preflight, localizer (dropped model_crop
-               arm), cachekey, report.
+               GCV post-processing, scoring, Bedrock client, readers/.
+src/harness/   Bake-off / offline CLIs that proved the pipeline.
 infra/         Dockerfile (Lambda image), Terraform (bootstrap + app, per
                account), apitest.ts / aadltest.ts smoke tests, deploy
                runbook in infra/README.md.
@@ -62,66 +62,53 @@ out/           Untracked run outputs (out/runs/<timestamp>/).
 
 | Command | What it does |
 |---|---|
-| `npm run app` | Field-test app server at :8080 (same code Lambda runs) |
-| `npm run label` | Labeler at :5178 — label new images, verify existing |
-| `npm run smoke` | Bake-off matrix, 1 image (catches creds/model-access gaps) |
-| `npm run bake` | Full bake-off over every labeled image |
-| `npm run preflight` | One tiny call per engine to verify cloud access |
+| `npm run app` | App server at :8080 (same code the Lambda runs) |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npx tsx src/harness/analyze.ts` | Post-proc strategies + cascade sim, fully offline from `data/cache` (zero API calls) |
-| `npx tsx src/harness/tier2.ts` | Claude on high-res crops at GCV line bboxes |
+| `npm run preflight` | One tiny call per engine to verify cloud access |
+| `npm run bake` / `npm run smoke` | Bake-off matrix (full / 1-image) — see `src/harness/README.md` |
+| `npm run label` | Labeler at :5178 — label new images, verify existing |
 | `npx tsx src/app/sessions-report.ts [--summary]` | Field-session telemetry report (S3) |
 | `npx tsx infra/apitest.ts [--full] [base-url]` | Smoke-test a deployed app (`--full` = paid path) |
 | `npx tsx infra/aadltest.ts [CODE]` | Live aadl.org client test (needs test creds; a CODE really redeems) |
 
-Bake-off filters: `npm run bake -- --reader claude|nova|textract|gcv
---arm none|model_crop --image sign01.jpg --limit 5 --force`.
-
-Bake-off outputs land in `out/runs/<timestamp>/`: raw per-prediction JSON,
-`results.csv`, and `report.md` (exact-match table, CER, confidence
-calibration, latency & cost). Paid calls are cached in `data/cache/` keyed by
-reader model + prompt hash + GCV input resolution/quality (see `CLAUDE.md`
-caching rules); `--force` bypasses.
-
-## The bake-off (historical, still runnable)
-
-Four readers were compared across two preprocessing arms:
-
-| Reader | Engine | Status |
-|---|---|---|
-| `gcv` | Google Cloud Vision (DOCUMENT_TEXT) | **Won tier 1** (with post-processing) |
-| `claude` | Bedrock Claude (Converse, multimodal) | **Won tier 2** (on crops; full-photo fails on small signs) |
-| `nova` | Bedrock Nova (Converse, multimodal) | Dropped (~65%, prompt-insensitive) |
-| `textract` | AWS Textract | Dropped (strictly worse than GCV) |
-
-Arms: `none` (downscaled full photo) and `model_crop` (paid Nova localizer
-bbox → crop) — `model_crop` is obsolete: GCV's tier-1 line bbox localizes for
-free and better. Dropped readers/arms stay runnable for future re-baselines.
-
-Metrics: exact full-code match (normalized: uppercase, spaces stripped —
-submission is case/space-insensitive), character error rate, confidence
-calibration (does low confidence predict errors?).
+Harness-specific commands (offline analysis, tier-2 crop experiments, etc.):
+[`src/harness/README.md`](src/harness/README.md).
 
 ## Prerequisites
 
-1. **Node 22** (matches CI).
+1. **Node 22**
 2. **AWS**: credentials via the standard chain (this project uses IAM Identity
    Center SSO profiles), region set. Bedrock model access enabled for the
-   Claude reader (per-account Marketplace subscription); Textract only if you
-   re-run that baseline.
+   Claude reader (per-account Marketplace subscription).
 3. **GCP**: a service-account JSON with the Vision API enabled;
    `GOOGLE_APPLICATION_CREDENTIALS` pointed at it (or inline via
    `GCP_SA_KEY_JSON`).
-4. Images in `data/images/` (or point `IMAGES_DIR` elsewhere) for the harness.
 
 Model IDs, region, thresholds, and cost constants are set in `.env` — see
-`.env.example`.
+`.env.example` (full list, including harness-only knobs).
 
 ```bash
 npm install
 cp .env.example .env      # then fill in creds / model IDs
 npm run preflight
 ```
+
+### Env vars to run the app locally
+
+| Var | Required? | Notes |
+|---|---|---|
+| `AWS_REGION` | yes | Bedrock/S3 region |
+| `AWS_PROFILE` | if not using default creds | SSO profile name |
+| `GOOGLE_APPLICATION_CREDENTIALS` | yes | path to GCP Vision service-account JSON |
+| `CLAUDE_READER_MODEL` | yes | Bedrock model ID for tier 2 |
+| `APP_PIN` | no | empty = no PIN gate locally |
+| `SESSIONS_BUCKET` | no | set only to test S3 session logging locally |
+| `PORT` | no | default 8080 |
+| `AADL_BASE_URL` | no | override aadl.org origin (e.g. for a mock) |
+| `EXTRACT_MODE` | no | `full` \| `gcv` \| `off` — reader circuit breaker fallback |
+
+Everything else in `.env.example` (`APPCONFIG_*`, cost constants,
+`GCV_BAND_*`, `IMAGES_DIR`, etc.) is harness-only or has a safe default.
 
 ## Deploys
 

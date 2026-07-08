@@ -236,6 +236,11 @@
       each code yourself.</p>
       <p>&#9997;&#65039; <b>If a read is wrong</b> or AADL rejects it, you can
       always fix the code by hand.</p>
+      <p>&#128241; <b>Add it to your home screen</b> to open it full-screen
+      like a real app &mdash; handy for snapping signs on the go.</p>
+      <button class="primary" id="install-android" hidden>&#128241; Add to home screen</button>
+      <p class="sub-msg" id="install-ios" hidden>In Safari, tap the Share button
+      and then <b>Add to Home Screen</b>.</p>
     </div>
     <button class="primary big" id="h-done">Got it</button>
   </div>
@@ -1071,6 +1076,28 @@ $("c-about-link").onclick = (e) => { e.preventDefault(); overlay("v-about"); };
 $("f-howto").onclick = (e) => { e.preventDefault(); overlay("v-howto"); };
 $("a-back").onclick = () => show(overlayReturn);
 $("h-done").onclick = () => { localStorage.setItem("howtoSeen", "1"); show(overlayReturn); };
+
+// Add-to-home-screen. Chromium fires beforeinstallprompt (stash it, reveal a
+// one-tap button); iOS Safari has no such event, so show the manual Share-sheet
+// steps instead. Hide everything when already installed (standalone).
+const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+let deferredPrompt = null;
+if (!standalone) {
+  addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    $("install-android").hidden = false;
+  });
+  if (/iphone|ipad|ipod/i.test(navigator.userAgent)) $("install-ios").hidden = false;
+}
+$("install-android").onclick = async () => {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  await deferredPrompt.userChoice;
+  deferredPrompt = null;
+  $("install-android").hidden = true;
+};
+addEventListener("appinstalled", () => { $("install-android").hidden = true; });
 
 home();
 </script>

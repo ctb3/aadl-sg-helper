@@ -65,7 +65,7 @@ export const config = {
 
   labelPort: num("LABEL_PORT", 5178),
 
-  // --- field-test app (src/app) ---
+  // --- app (src/app) ---
   // Summer Game submission target; overridable for testing against a mirror.
   aadlBaseUrl: str("AADL_BASE_URL", "https://aadl.org"),
   sessionsBucket: str("SESSIONS_BUCKET", ""),

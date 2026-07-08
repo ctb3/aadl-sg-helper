@@ -13,7 +13,7 @@ import { runTier1, runTier2 } from "./pipeline";
 import { loadSecrets } from "./secrets";
 
 /**
- * Field-test app server. Plain node:http (pattern: label.ts); runs unchanged
+ * App server. Plain node:http (pattern: label.ts); runs unchanged
  * locally (`npm run app`) and on Lambda behind the Web Adapter.
  *
  * Session flow (client drives it, S3 is the only state):

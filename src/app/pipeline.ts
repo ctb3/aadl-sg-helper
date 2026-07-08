@@ -8,7 +8,7 @@ import { gcvReader } from "../core/readers/gcv";
 import type { ReaderResult } from "../core/types";
 
 /**
- * The proven cascade as buffer-in library functions for the field-test app:
+ * The proven cascade as buffer-in library functions for the app:
  * tier 1 = GCV + phrase-subtraction/tallest-line + minConf gate, tier 2 =
  * Claude on a high-res crop of GCV's chosen line. No filesystem, no cache.
  *

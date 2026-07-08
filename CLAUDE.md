@@ -49,7 +49,7 @@ Scoring normalizes case/whitespace (submission is case/space-insensitive).
   entirely offline from `data/cache` (zero API calls, free to iterate).
 - `npx tsx src/harness/tier2.ts` — Claude on a high-res crop at GCV's chosen-line bbox.
 - `npm run preflight` / `npm run typecheck`.
-- `npm run app` — field-test app server at :8080 (same code Lambda runs);
+- `npm run app` — app server at :8080 (same code Lambda runs);
   `npx tsx infra/apitest.ts [--full] [base-url]` smoke-tests it (`--full` = paid
   path; base URL must have NO trailing slash).
 - Deploys are CI-only (`.github/workflows/`, runbook in `infra/README.md`):
@@ -61,7 +61,7 @@ Scoring normalizes case/whitespace (submission is case/space-insensitive).
   test creds in .env). Pass a CODE to exercise the success path — it REALLY
   redeems it on the test account (repeat runs verify via already_redeemed).
 
-## Field-test app (src/app + infra)
+## The app (src/app + infra)
 
 v0.2 app: photo → tier-1 GCV (no spatial band; gate minConf≥0.5) → approve/
 reject → tier-2 Claude on the GCV-line crop → manual prefilled → submit to

@@ -8,6 +8,7 @@ import { config } from "../core/config";
 import { dims } from "../core/image";
 import { AadlError, AuthExpiredError, connect, loadJar, submitCode } from "./aadl";
 import { extractMode, storeImages } from "./flags";
+import { MANIFEST_JSON, icon, isIcon } from "./icons";
 import { runTier1, runTier2 } from "./pipeline";
 import { loadSecrets } from "./secrets";
 
@@ -360,6 +361,26 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/favicon.ico") {
     res.writeHead(204);
     res.end();
+    return;
+  }
+  // PWA manifest + icons: safe to cache hard (they change only with a deploy),
+  // deliberately unlike GET /'s no-store. No S3 needed, so they sit ahead of
+  // the sessionsBucket gate below.
+  if (req.method === "GET" && url.pathname === "/manifest.webmanifest") {
+    res.writeHead(200, {
+      "content-type": "application/manifest+json",
+      "cache-control": "public, max-age=31536000, immutable",
+    });
+    res.end(MANIFEST_JSON);
+    return;
+  }
+  if (req.method === "GET" && url.pathname.startsWith("/") && isIcon(url.pathname.slice(1))) {
+    const buf = await icon(url.pathname.slice(1));
+    res.writeHead(200, {
+      "content-type": "image/png",
+      "cache-control": "public, max-age=31536000, immutable",
+    });
+    res.end(buf);
     return;
   }
 

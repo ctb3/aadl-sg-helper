@@ -267,7 +267,8 @@
 <footer>
   <a href="#" id="f-howto">How-to</a> &middot;
   <a href="#" id="f-about">About</a> &middot;
-  <a href="https://github.com/ctb3/aadl-sg-helper" target="_blank" rel="noopener">GitHub</a> &middot;
+  <a href="https://github.com/ctb3/aadl-sg-helper" target="_blank" rel="noopener">GitHub</a>
+  <span id="f-a2hs-wrap" hidden>&middot; <a href="#" id="f-a2hs">Add to Home Screen</a></span> &middot;
   v{{VERSION}}
 </footer>
 
@@ -1082,22 +1083,30 @@ $("h-done").onclick = () => { localStorage.setItem("howtoSeen", "1"); show(overl
 // steps instead. Hide everything when already installed (standalone).
 const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 let deferredPrompt = null;
+function revealInstall() { $("f-a2hs-wrap").hidden = false; }
+function hideInstall() { $("install-android").hidden = true; $("f-a2hs-wrap").hidden = true; }
 if (!standalone) {
   addEventListener("beforeinstallprompt", (e) => {
     e.preventDefault();
     deferredPrompt = e;
     $("install-android").hidden = false;
+    revealInstall();
   });
-  if (/iphone|ipad|ipod/i.test(navigator.userAgent)) $("install-ios").hidden = false;
+  if (/iphone|ipad|ipod/i.test(navigator.userAgent)) { $("install-ios").hidden = false; revealInstall(); }
 }
-$("install-android").onclick = async () => {
-  if (!deferredPrompt) return;
+// True once we've fired (or can fire) the native Chromium prompt; false on iOS
+// (no such API) so the caller falls back to the how-to's Share-sheet steps.
+async function promptInstall() {
+  if (!deferredPrompt) return false;
   deferredPrompt.prompt();
   await deferredPrompt.userChoice;
-  deferredPrompt = null;
-  $("install-android").hidden = true;
-};
-addEventListener("appinstalled", () => { $("install-android").hidden = true; });
+  deferredPrompt = null; // single-use; it won't fire again this load
+  hideInstall();
+  return true;
+}
+$("install-android").onclick = promptInstall;
+$("f-a2hs").onclick = async (e) => { e.preventDefault(); if (!(await promptInstall())) overlay("v-howto"); };
+addEventListener("appinstalled", hideInstall);
 
 home();
 </script>

@@ -372,7 +372,10 @@ function renderAccounts() {
       const rm = document.createElement("button");
       rm.textContent = "✕";
       rm.setAttribute("aria-label", "Remove account " + acct.label);
-      rm.onclick = () => { accounts.splice(i, 1); saveAccounts(accounts); renderAccounts(); };
+      rm.onclick = () => {
+        if (!confirm("Disconnect " + acct.label + "? You'll need your password to reconnect.")) return;
+        accounts.splice(i, 1); saveAccounts(accounts); renderAccounts();
+      };
       btns.append(rm);
       head.append(name, btns);
       div.append(head);

@@ -110,6 +110,21 @@ accuracy/speed reporting is unaffected. `sessions-report.ts
 rates, gate%, per-step avg·p99); the default (no flag / a prefix arg) stays the
 single-version detail view. Telemetry lives in the per-session JSON (durable
 event log; summary computed on read) — never gated by the flag.
+GET /dash (v1.2.0, public like the app) is the web rollup: 3-bucket tier-1
+outcome (t1 ✓ / t1 ✗ but tier-2 caught / both ✗), tier1/tier2 correct %, and
+med·p90 latency, by Detroit-local day and by version. Data via GET
+/api/dash-stats (src/app/dash.ts; session loading + stat helpers shared with
+the CLI through src/app/sessions.ts). Dash truth = the AADL submit oracle when
+the session submitted (accepted attempt's code confirms; rejected scores the
+session red even if approved — no phantom tier-2 ✓ like the CLI's
+truth-by-approval); never-submitted sessions fall back to approval. Per-(version, day) summaries cache as
+compact per-session records — NO code strings, the endpoint is public and
+codes are redeemable — at sessions/_summary/v<ver>/<day>.json once the day is
+≥2 Detroit days old (late resubmits mutate submit.json before that); open days
+compute fresh; whole payload memoized in-process 60s. Force recompute: delete
+the cache object or bump SCHEMA in dash.ts. Required prefix-scoped
+s3:ListBucket in BOTH app/iam.tf and the bootstrap boundary — bootstrap
+re-apply is manual (admin SSO, per account) BEFORE the deploy (infra/README).
 Versioning is tag-driven: prod ships package.json's version verbatim (CI
 asserts tag == version); test builds stamp `X.Y.Z-test.<run>.<attempt>.g<sha>`
 via a Dockerfile ARG. The version shows on the page, prefixes sessions

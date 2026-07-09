@@ -7,6 +7,7 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3
 import { config } from "../core/config";
 import { dims } from "../core/image";
 import { AadlError, AuthExpiredError, connect, loadJar, submitCode } from "./aadl";
+import { dashStats } from "./dash";
 import { extractMode, storeImages } from "./flags";
 import { MANIFEST_JSON, icon, isIcon } from "./icons";
 import { runTier1, runTier2 } from "./pipeline";
@@ -335,14 +336,23 @@ const API: Record<string, (body: Record<string, unknown>) => Promise<unknown>> =
   "/api/submit": handleSubmit,
 };
 
+// GET APIs take no body (readJsonBody is skipped in the dispatch below).
+const GET_API: Record<string, (body: Record<string, unknown>) => Promise<unknown>> = {
+  "/api/dash-stats": () => dashStats(APP_VERSION),
+};
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
 
-  if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+  const htmlPage =
+    url.pathname === "/" || url.pathname === "/index.html" ? "index.html"
+    : url.pathname === "/dash" ? "dash.html"
+    : null;
+  if (req.method === "GET" && htmlPage) {
     // no-store: a phone-cached stale client silently dropped a whole field
-    // batch's instrumentation once. The page is ~12KB; always fetch fresh.
+    // batch's instrumentation once. The pages are ~12KB; always fetch fresh.
     const html = fs
-      .readFileSync(path.join(publicDir, "index.html"), "utf8")
+      .readFileSync(path.join(publicDir, htmlPage), "utf8")
       .replaceAll("{{VERSION}}", APP_VERSION);
     res.writeHead(200, {
       "content-type": "text/html; charset=utf-8",
@@ -384,7 +394,10 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const handler = req.method === "POST" ? API[url.pathname] : undefined;
+  const handler =
+    req.method === "POST" ? API[url.pathname]
+    : req.method === "GET" ? GET_API[url.pathname]
+    : undefined;
   if (!handler) {
     send(res, 404, { error: "not found" });
     return;
@@ -395,7 +408,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
-    const body = await readJsonBody(req, MAX_BODY_BYTES[url.pathname]);
+    const body = req.method === "GET" ? {} : await readJsonBody(req, MAX_BODY_BYTES[url.pathname]);
     send(res, 200, await handler(body));
   } catch (err: any) {
     const msg = String(err?.message ?? err);

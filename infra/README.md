@@ -169,6 +169,13 @@ aws appconfig start-deployment --application-id "$APP" --environment-id "$ENV" \
 > creates the AppConfig stack, or CI's `apply` hits AccessDenied and the runtime
 > flag read silently fails-open to storing.
 
+> **Bootstrap re-apply required (one-time, per account):** the /dash dashboard
+> (v1.2.0) added `s3:ListBucket` (prefix-scoped to `sessions/*`) to the
+> `aadl-sg-app-boundary`. Re-apply the bootstrap stack (admin SSO, per account)
+> **before** the v1.2.0 app deploy — the boundary caps the exec role, so
+> without it /api/dash-stats gets AccessDenied on ListObjectsV2 even after the
+> app stack grants it.
+
 ## Local escape hatch (CI down / debugging)
 
 Same commands CI runs, with an admin SSO profile: docker build+push an

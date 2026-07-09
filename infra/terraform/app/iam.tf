@@ -47,6 +47,13 @@ resource "aws_iam_role_policy" "app_access" {
         Resource = "${aws_s3_bucket.sessions.arn}/sessions/*"
       },
       {
+        # /dash enumerates sessions (and the _summary cache) via ListObjectsV2.
+        Effect    = "Allow"
+        Action    = ["s3:ListBucket"]
+        Resource  = aws_s3_bucket.sessions.arn
+        Condition = { StringLike = { "s3:prefix" = "sessions/*" } }
+      },
+      {
         # Cold-start secret fetch (src/app/secrets.ts). No kms:Decrypt needed:
         # the aws/ssm managed key's policy already allows account principals
         # to decrypt via the SSM service.

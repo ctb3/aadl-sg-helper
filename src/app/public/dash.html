@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#f6f5f2">
+<title>AADL Code Helper — Dashboard</title>
+<link rel="icon" href="/favicon.png">
+<style>
+  :root {
+    --ink:#1f1d1a; --muted:#5c5a55; --faint:#898781; --bg:#f6f5f2; --card:#fff;
+    --line:#e3e0d8;
+    --accent:#0a6e3c;
+    --ok:#008300; --caught:#c98500; --bad:#d03b3b;
+    --r-card:14px; --r-el:6px;
+    --shadow:0 1px 4px rgba(0,0,0,.08);
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,sans-serif; color:var(--ink);
+         background:var(--bg); }
+  main { width:100%; max-width:760px; margin:0 auto; display:flex; flex-direction:column;
+         gap:1rem; padding:1rem max(1rem, env(safe-area-inset-right)) 2rem max(1rem, env(safe-area-inset-left)); }
+  header { display:flex; align-items:baseline; gap:.6rem; flex-wrap:wrap;
+           padding-top:env(safe-area-inset-top); }
+  h1 { font-size:1.15rem; margin:0; font-weight:700; }
+  h2 { font-size:.95rem; margin:0 0 .6rem; font-weight:700; }
+  h3 { font-size:.8rem; margin:1rem 0 .35rem; font-weight:600; color:var(--muted);
+       text-transform:uppercase; letter-spacing:.04em; }
+  .meta { font-size:.8rem; color:var(--muted); }
+  .card { background:var(--card); border-radius:var(--r-card); padding:1rem; box-shadow:var(--shadow); }
+
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:.75rem; }
+  .tile { background:var(--card); border-radius:var(--r-card); padding:.8rem 1rem; box-shadow:var(--shadow); }
+  .tile .label { font-size:.78rem; color:var(--muted); }
+  .tile .value { font-size:1.6rem; font-weight:600; margin-top:.15rem; }
+  .tile .sub { font-size:.75rem; color:var(--faint); margin-top:.1rem; }
+
+  .legend { display:flex; gap:1rem; flex-wrap:wrap; font-size:.8rem; color:var(--muted);
+            margin-bottom:.7rem; }
+  .legend span { display:inline-flex; align-items:center; gap:.35rem; }
+  .swatch { width:10px; height:10px; border-radius:3px; flex:none; }
+
+  .brow { display:grid; grid-template-columns:6.5rem 1fr 7.5rem; align-items:center;
+          gap:.6rem; padding:.22rem 0; }
+  .brow .key { font-size:.8rem; color:var(--ink); white-space:nowrap; overflow:hidden;
+               text-overflow:ellipsis; }
+  .brow .key .sealed { color:var(--faint); }
+  .brow .nd { font-size:.75rem; color:var(--muted); text-align:right;
+              font-variant-numeric:tabular-nums; }
+  .bar { display:flex; gap:2px; height:16px; }
+  .bar > i { border-radius:2px; min-width:3px; }
+  .bar > i:first-child { border-top-left-radius:4px; border-bottom-left-radius:4px; }
+  .bar > i:last-child { border-top-right-radius:4px; border-bottom-right-radius:4px; }
+  .bar .empty { background:var(--line); flex:1; }
+
+  table { border-collapse:collapse; width:100%; font-size:.8rem; }
+  th { text-align:right; font-weight:600; color:var(--muted); padding:.3rem .5rem;
+       border-bottom:1px solid var(--line); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; padding-left:0; }
+  td { text-align:right; padding:.3rem .5rem; font-variant-numeric:tabular-nums;
+       border-bottom:1px solid var(--line); white-space:nowrap; }
+  tr:last-child td { border-bottom:none; }
+  .scroll { overflow-x:auto; }
+
+  .foot { font-size:.75rem; color:var(--faint); line-height:1.5; }
+  .err { color:#b3261e; }
+</style>
+
+<main>
+  <header>
+    <h1>Code helper dashboard</h1>
+    <span class="meta">v{{VERSION}} · <span id="generated"></span></span>
+  </header>
+
+  <div class="tiles" id="tiles" hidden></div>
+
+  <section class="card" id="outcome" hidden>
+    <h2>Tier-1 outcome (completed sessions)</h2>
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--ok)"></i>tier 1 correct</span>
+      <span><i class="swatch" style="background:var(--caught)"></i>tier 1 wrong, tier 2 caught it</span>
+      <span><i class="swatch" style="background:var(--bad)"></i>both wrong</span>
+    </div>
+    <h3>By day</h3>
+    <div id="outcome-day"></div>
+    <h3>By version</h3>
+    <div id="outcome-version"></div>
+  </section>
+
+  <section class="card" id="latency" hidden>
+    <h2>Latency (med · p90)</h2>
+    <h3>By version</h3>
+    <div class="scroll"><table id="lat-version"></table></div>
+    <h3>By day</h3>
+    <div class="scroll"><table id="lat-day"></table></div>
+  </section>
+
+  <p class="foot" id="status">Loading…</p>
+  <p class="foot">Truth is the AADL submission response when the session submitted
+    (an accepted code confirms the read; a rejected one counts the session red
+    even if the user approved it — the wrong-crop-approved case). Sessions that
+    never submitted fall back to the user's approved/manual final code, which
+    can't catch its own misreads. Days marked ° are sealed: served from the
+    cached summary, recomputed only if the cache is cleared. Client time
+    includes the human (shutter→verdict).</p>
+</main>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+const pctText = (r) => (r.d ? `${Math.round((r.n / r.d) * 100)}% · ${r.n}/${r.d}` : "n/a");
+const fmtMs = (ms) => (ms === null || ms === undefined) ? "–"
+  : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+const latText = (l) => (l.n ? `${fmtMs(l.med)} · ${fmtMs(l.p90)}` : "–");
+
+function tile(label, value, sub) {
+  const t = el("div", "tile");
+  t.append(el("div", "label", label), el("div", "value", value));
+  if (sub) t.append(el("div", "sub", sub));
+  return t;
+}
+
+function outcomeRow(key, sealed, a) {
+  const row = el("div", "brow");
+  const k = el("span", "key", key);
+  if (sealed) k.append(el("span", "sealed", " °"));
+  const bar = el("div", "bar");
+  const b = a.buckets;
+  const total = b.t1Correct + b.t1WrongT2Caught + b.bothWrong;
+  if (total) {
+    for (const [n, color] of [[b.t1Correct, "var(--ok)"], [b.t1WrongT2Caught, "var(--caught)"], [b.bothWrong, "var(--bad)"]]) {
+      if (!n) continue;
+      const seg = el("i");
+      seg.style.flexGrow = n;
+      seg.style.background = color;
+      bar.append(seg);
+    }
+  } else {
+    bar.append(el("i", "empty"));
+  }
+  const p = (n) => total ? ` (${Math.round((n / total) * 100)}%)` : "";
+  row.title = `${key}: ${b.t1Correct}${p(b.t1Correct)} tier-1 correct, `
+    + `${b.t1WrongT2Caught}${p(b.t1WrongT2Caught)} caught by tier 2, `
+    + `${b.bothWrong}${p(b.bothWrong)} both wrong (of ${a.completed} completed; ${a.abandoned} abandoned). `
+    + `Tier-1 misses: ${b.t1WrongGateFail} gate-fail (no prefill), ${b.t1WrongGatePassed} wrong prefill.`;
+  const okN = b.t1Correct + b.t1WrongT2Caught;
+  const nd = el("span", "nd", total ? `${Math.round((okN / total) * 100)}% · ${okN}/${total} ✓` : "0 done");
+  row.append(k, bar, nd);
+  return row;
+}
+
+function latTable(table, rows) {
+  table.textContent = "";
+  const head = el("tr");
+  for (const h of ["", "extract", "GCV", "tier-2 Claude", "client (incl. human)", "n"]) {
+    head.append(el("th", null, h));
+  }
+  table.append(head);
+  for (const r of rows) {
+    const tr = el("tr");
+    tr.append(el("td", null, r.key + (r.sealed ? " °" : "")));
+    for (const v of [latText(r.lat.extractTotal), latText(r.lat.gcv), latText(r.lat.claude), latText(r.lat.client)]) {
+      tr.append(el("td", null, v));
+    }
+    tr.append(el("td", null, String(r.sessions)));
+    table.append(tr);
+  }
+}
+
+async function load() {
+  let data;
+  try {
+    const res = await fetch("/api/dash-stats");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    data = await res.json();
+  } catch (err) {
+    $("status").textContent = `Failed to load stats: ${err.message}`;
+    $("status").classList.add("err");
+    return;
+  }
+  $("status").hidden = true;
+  $("generated").textContent = new Date(data.generatedAt).toLocaleString();
+
+  const t = data.totals;
+  const tiles = $("tiles");
+  tiles.append(
+    tile("Sessions", String(t.sessions), `${t.completed} completed · ${t.abandoned} abandoned`),
+    tile("Tier 1 correct", t.t1Correct.d ? `${Math.round((t.t1Correct.n / t.t1Correct.d) * 100)}%` : "n/a", pctText(t.t1Correct)),
+    tile("Tier 2 when run", t.t2CorrectWhenRun.d ? `${Math.round((t.t2CorrectWhenRun.n / t.t2CorrectWhenRun.d) * 100)}%` : "n/a", pctText(t.t2CorrectWhenRun)),
+    tile("Extract median", fmtMs(t.lat.extractTotal.med), `p90 ${fmtMs(t.lat.extractTotal.p90)} · gate ${pctText(t.gatePassRate)}`),
+  );
+  tiles.hidden = false;
+
+  for (const r of data.byDay) $("outcome-day").append(outcomeRow(r.key, r.sealed, r));
+  for (const r of data.byVersion) $("outcome-version").append(outcomeRow(r.key, false, r));
+  $("outcome").hidden = false;
+
+  latTable($("lat-version"), data.byVersion);
+  latTable($("lat-day"), data.byDay);
+  $("latency").hidden = false;
+}
+
+load();
+</script>
+</html>

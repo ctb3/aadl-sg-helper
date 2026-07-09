@@ -33,6 +33,17 @@ async function main(): Promise<void> {
   const page = await fetch(BASE + "/");
   check("GET / serves page", page.status === 200 && (await page.text()).includes("AADL Summer Game Code Helper"));
 
+  const dash = await fetch(BASE + "/dash");
+  check("GET /dash serves page", dash.status === 200 && (await dash.text()).includes("Code helper dashboard"));
+
+  const stats = await fetch(BASE + "/api/dash-stats");
+  const statsJson = await stats.json().catch(() => ({}));
+  check(
+    "GET /api/dash-stats returns rollup",
+    stats.status === 200 && Array.isArray(statsJson.byDay) && Array.isArray(statsJson.byVersion),
+    `sessions=${statsJson.totals?.sessions} days=${statsJson.byDay?.length} versions=${statsJson.byVersion?.length}`,
+  );
+
   const badId = await api("/api/extract", { sessionId: "../../etc" });
   check("bad sessionId rejected", badId.status === 400, `status=${badId.status}`);
 

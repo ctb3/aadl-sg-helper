@@ -34,6 +34,14 @@ resource "aws_iam_policy" "app_boundary" {
         Resource = "arn:aws:s3:::aadl-sg-sessions-*/sessions/*"
       },
       {
+        # /dash enumerates sessions via ListObjectsV2 (see app/iam.tf).
+        Sid       = "SessionList"
+        Effect    = "Allow"
+        Action    = ["s3:ListBucket"]
+        Resource  = "arn:aws:s3:::aadl-sg-sessions-*"
+        Condition = { StringLike = { "s3:prefix" = "sessions/*" } }
+      },
+      {
         # Cold-start secret fetch (src/app/secrets.ts) — the secrets no longer
         # ride the Lambda env, so the boundary must not cap the runtime read.
         Sid      = "SecretsRead"

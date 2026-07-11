@@ -20,6 +20,9 @@
     --shadow:0 1px 4px rgba(0,0,0,.08);
   }
   * { box-sizing:border-box; }
+  /* [hidden] must beat class display rules (.s-badge's display:flex was
+     overriding it — the ✓ badge showed even when JS hid it). */
+  [hidden] { display:none !important; }
   body { margin:0; font-family:system-ui,-apple-system,sans-serif; color:var(--ink);
          background:var(--bg); min-height:100dvh; display:flex; flex-direction:column; }
   main { flex:1; width:100%; max-width:480px; margin:0 auto; display:flex;
@@ -74,20 +77,29 @@
   .acct:first-child { border-top:none; }
   .acct-head { display:flex; justify-content:space-between; align-items:center; }
   .acct button { font-size:.8rem; padding:.4rem .7rem; background:var(--sage); color:var(--sage-ink); }
-  .acct label { display:inline-flex; align-items:center; gap:.35rem; margin:.35rem .8rem 0 0; padding:.15rem 0; }
+  /* Player toggles: native checkboxes visually hidden inside sage pill chips
+     (the .alts visual family); the ✓ prefix appears when checked. */
+  .acct label { display:inline-flex; align-items:center; margin:.4rem .5rem 0 0;
+    padding:.35rem .75rem; border-radius:999px; border:1px solid var(--line-strong);
+    color:var(--muted); font-weight:600; cursor:pointer; position:relative;
+    -webkit-tap-highlight-color:transparent; }
+  .acct label input { position:absolute; opacity:0; pointer-events:none; }
+  .acct label:has(:checked) { background:var(--sage); border-color:var(--sage-line); color:var(--sage-ink); }
+  .acct label:has(:checked)::before { content:"✓ "; white-space:pre; }
+  .acct label:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
   .sub-line { padding:.5rem 0; border-top:1px solid var(--line); font-size:1.05rem; }
   .sub-line:first-child { border-top:none; }
   .sub-ok { color:var(--accent); font-weight:600; }
   .sub-warn { color:var(--warn); font-weight:600; }
   .sub-bad { color:var(--danger); font-weight:600; }
   .sub-msg { font-size:.8rem; color:var(--muted); margin:.2rem 0 0; }
+  .sub-quiet { color:var(--muted); font-weight:600; }
   .linkbtn { display:block; text-align:center; text-decoration:none; border-radius:var(--r-btn); font-weight:600; }
   .hidden-msg { font-size:1.15rem; font-style:italic; text-align:center; color:var(--sage-ink);
     background:var(--sage); border:1px solid var(--sage-line); border-radius:var(--r-el); padding:.8rem; margin:.4rem 0 0; }
   .s-badge { width:54px; height:54px; margin:.3rem auto 0; border-radius:50%;
     background:var(--sage); border:1px solid var(--sage-line); color:var(--accent);
     font-size:1.7rem; display:flex; align-items:center; justify-content:center; }
-  .s-head-ok { font-size:1.35rem; font-weight:700; color:var(--accent); text-align:center; margin:0; }
   .m-note { color:var(--warn); font-weight:600; text-align:center; margin:0; }
   footer { text-align:center; font-size:.8rem; color:var(--muted);
            padding:0 1rem calc(1.2rem + env(safe-area-inset-bottom)); }
@@ -106,13 +118,14 @@
 
   <div class="view" id="v-home">
     <button class="primary big" id="btn-photo">&#128247; Photograph a sign</button>
+    <p class="tag">Get as close as you can! Fill the frame with the sign, keep
+    the code as straight as possible, and do your best to keep other signs or
+    house numbers out of the shot.</p>
     <input type="file" id="file" accept="image/*" capture="environment" hidden>
     <div class="card">
       <div id="acct-list"><p class="tag">No AADL account connected. Codes will
       open aadl.org for you to submit yourself.</p></div>
       <button class="ghost wide" id="btn-connect">+ Connect AADL account</button>
-      <p class="tag" id="auto-note" hidden>Codes are read and submitted automatically
-      for every checked player.</p>
     </div>
   </div>
 
@@ -168,6 +181,7 @@
     </div>
     <button class="danger" id="s-edit" hidden>&#9998; Fix the code by hand</button>
     <button class="primary big" id="s-new">&#128247; New photo</button>
+    <button class="ghost" id="s-home">&larr; Back to home</button>
   </div>
 
   <div class="view" id="v-busy">
@@ -210,6 +224,7 @@
        Open aadl.org &rarr;</a>
     <button class="ghost" id="d-copy">Copy code</button>
     <button class="ghost" id="d-new">&#128247; New photo</button>
+    <button class="ghost" id="d-home">&larr; Back to home</button>
   </div>
 
   <div class="view" id="v-error">
@@ -223,9 +238,9 @@
   <div class="view" id="v-howto">
     <div class="card">
       <p><b>How it works</b></p>
-      <p>&#128247; <b>Photograph a sign.</b> Get as close as you can. Try to
-      fill the frame with the sign, and do your best to keep any other text
-      out of the shot (other signs, house numbers, etc.)</p>
+      <p>&#128247; <b>Photograph a sign.</b> Get as close as you can! Fill the
+      frame with the sign, keep the code as straight as possible, and do your
+      best to keep other signs or house numbers out of the shot.</p>
       <p>&#128269; <b>The app reads the handwriting.</b> Most codes are read
       quickly. Tricky ones get a closer look from Claude.</p>
       <p>&#127942; <b>Connect your AADL account.</b> If you log in to your
@@ -414,7 +429,6 @@ function renderAccounts() {
       return div;
     }));
   }
-  $("auto-note").hidden = accounts.length === 0;
 }
 
 async function connectAccount() {
@@ -971,26 +985,33 @@ async function submitToAadl(code) {
   $("s-hidden").textContent = hidden;
   $("s-hidden").hidden = !hidden;
   const allOk = res.results.every((r) => r.outcome === "success" || r.outcome === "already_redeemed");
+  // One success signal: when everything landed, the ✓ badge alone carries it
+  // (no heading, no per-line "accepted" badges — just quiet points lines).
+  // Mixed outcomes keep the tag line and the colored per-line labels.
   $("s-badge").hidden = !allOk;
-  $("s-tag").textContent = allOk ? "Code redeemed" : "Submitted to AADL";
-  $("s-tag").className = allOk ? "s-head-ok" : "tag";
+  $("s-tag").hidden = allOk;
+  $("s-tag").textContent = "Submitted to AADL";
   $("s-results").replaceChildren(...res.results.map((r) => {
-    const [cls, label] = OUTCOME_TEXT[r.outcome] || OUTCOME_TEXT.unknown;
     const div = document.createElement("div");
     div.className = "sub-line";
     const head = document.createElement("div");
-    const badge = document.createElement("span");
-    badge.className = cls;
     // "each" only when 2+ players in the account actually scored — a mixed
     // account (one redeemed, one already had it) shows plain "100 pts" and
     // the per-player messages below tell the rest.
     const scored = (r.messages || []).filter((m) => m.outcome === "success").length;
-    badge.innerHTML = label +
-      (r.outcome === "success" && r.points != null
-        ? " &middot; " + r.points + (scored > 1 ? " pts each" : " pts")
-        : "");
-    if (res.results.length > 1) head.append(r.label + ": ");
-    head.append(badge);
+    const pts = r.points != null ? r.points + (scored > 1 ? " pts each" : " pts") : "";
+    if (allOk) {
+      head.className = "sub-quiet";
+      const what = r.outcome === "already_redeemed" ? "already redeemed" : (pts || "accepted");
+      head.textContent = (res.results.length > 1 ? r.label + " · " : "") + what;
+    } else {
+      const [cls, label] = OUTCOME_TEXT[r.outcome] || OUTCOME_TEXT.unknown;
+      const badge = document.createElement("span");
+      badge.className = cls;
+      badge.innerHTML = label + (r.outcome === "success" && pts ? " &middot; " + pts : "");
+      if (res.results.length > 1) head.append(r.label + ": ");
+      head.append(badge);
+    }
     div.append(head);
     for (const m of r.messages || []) {
       const p = document.createElement("p");
@@ -1012,6 +1033,9 @@ async function submitToAadl(code) {
 
 // ---- wiring ----
 $("btn-photo").onclick = () => { prefetchSession(); $("file").click(); };
+// "New photo" on the success screens: reset like home(), then reopen the
+// camera in the same click (the synchronous .click() keeps the user-gesture).
+function newPhoto() { home(); prefetchSession(); $("file").click(); }
 $("file").onchange = (e) => { if (e.target.files[0]) onPhoto(e.target.files[0]); };
 
 // Submit buttons disarm on first fire (a double tap could double-POST to
@@ -1035,7 +1059,8 @@ $("d-copy").onclick = async () => {
   catch { $("d-copy").textContent = "Copy blocked. Long-press the code"; }
   setTimeout(() => { $("d-copy").textContent = "Copy code"; }, 1600);
 };
-$("d-new").onclick = home;
+$("d-new").onclick = newPhoto;
+$("d-home").onclick = home;
 // The warning card fronts the login form every time — accepting swaps the
 // form in without clearing anything already typed.
 function setConnectWarning(showWarn) {
@@ -1077,7 +1102,8 @@ $("m-input").addEventListener("input", () => {
     try { el.setSelectionRange(pos, pos); } catch { /* type=text always supports it */ }
   }
 });
-$("s-new").onclick = home;
+$("s-new").onclick = newPhoto;
+$("s-home").onclick = home;
 $("s-edit").onclick = () => showManual();
 $("r-restart").onclick = home;
 $("m-restart").onclick = home;

@@ -250,12 +250,12 @@
       <p><b>About</b></p>
       <p>Hi! I'm Carl. &#128075; I'm a fellow Ann Arborite and fan of the
       AADL Summer Game. I often pass signs while running or walking my dog
-      and don't always want to stop and type in the code. sometimes I'd
+      and don't always want to stop and type in the code. Sometimes I'd
       just take a picture to enter later. My roots are in software
-      development, so I always thought it'd be cool if there were an app
+      development, so I always thought it'd be cool if there was an app
       that just read the sign and submitted the code automatically. Well,
       this is it! Having a computer read handwriting is a challenge, so
-      it's not perfect. </p>
+      it's not perfect. But it ended up working better than I hoped!</p>
       <p><b>Note:</b> this is a personal project, I'm not affiliated with
       the Ann Arbor District Library in any way. You should still hop over
       to <a href="https://aadl.org" target="_blank" rel="noopener">aadl.org</a>
@@ -267,7 +267,7 @@
 <footer>
   <a href="#" id="f-howto">How-to</a> &middot;
   <a href="#" id="f-about">About</a> &middot;
-  <a href="https://github.com/ctb3/aadl-sg-helper" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/ctb3/aadl-sg-helper" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true" style="vertical-align:-1px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
   <span id="f-a2hs-wrap" hidden>&middot; <a href="#" id="f-a2hs">Add to Home Screen</a></span> &middot;
   v{{VERSION}}
 </footer>
@@ -283,11 +283,29 @@ const validCode = (s) => norm(s).length > 0;
 
 let state = null;
 
-// Shown while the photo is being re-encoded
-const PREP_MESSAGES = [
-  "Preparing image…"
-];
-const prepMsg = () => PREP_MESSAGES[Math.floor(Math.random() * PREP_MESSAGES.length)];
+// Every loading line and warning notice the flow shows, in one place.
+// *_STALL lines are the busy screen's second line after STALL_MS (see busy()).
+// PREP is an array: one entry is picked at random per photo.
+const MSG = {
+  PREP: ["Preparing image…"],
+  PREP_STALL: "Still preparing… the phone is doing its best…",
+  UPLOADING: "Uploading photo…",
+  UPLOADING_PCT: (pct) => "Uploading photo… " + pct + "%",
+  UPLOADING_STALL: "Still uploading… weak signal?",
+  READING: "Reading the sign…",
+  READING_STALL: "Still reading… hang on…",
+  ESCALATE: "Hmm not quite… Let's try one more time!",
+  ESCALATE_ORACLE: "AADL didn't recognize it, Let's try one more time!",
+  ESCALATE_SEND_STALL: "Still sending… weak signal?",
+  ESCALATE_WORK_STALL: "Still reading… hang on…",
+  SUBMITTING: "Submitting to AADL…",
+  SUBMITTING_STALL: "Still submitting… aadl.org is slow right now…",
+  EXTRACT_OFF: "Sorry! automatic code reading is switched off right now. Type the code from the sign:",
+  NOT_RECOGNIZED: (code) => "AADL didn’t recognize “" + code + "”. Check it against the photo:",
+  HANDOFF_OPENED: "aadl.org opened in a new tab with your code prefilled.",
+  HANDOFF_BLOCKED: "Tap below to open aadl.org with your code prefilled:",
+};
+const prepMsg = () => MSG.PREP[Math.floor(Math.random() * MSG.PREP.length)];
 
 function show(view, busyMsg) {
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
@@ -673,10 +691,10 @@ async function escalateBody() {
 // Shared tier-2 escalation: crop + Claude in one POST. The stall line names
 // the slow half — crop still uploading vs Claude thinking.
 async function callEscalate(lead) {
-  busy(lead, "Still sending the close-up… weak signal?");
+  busy(lead, MSG.ESCALATE_SEND_STALL);
   const t = Date.now();
   const r = await apiUpload("/api/escalate", await escalateBody(), {
-    onSent: () => busy(lead, "Still working… tricky handwriting takes a moment…"),
+    onSent: () => busy(lead, MSG.ESCALATE_WORK_STALL),
   });
   state.timings.escalateMs = Date.now() - t;
   state.timings.escalateServer = r.serverTimings;
@@ -727,7 +745,7 @@ function prefetchSession() {
 async function onPhoto(file) {
   try {
     state = { t0: Date.now(), verdicts: [], timings: {} };
-    busy(prepMsg(), "Still preparing… the phone is slow after the camera…");
+    busy(prepMsg(), MSG.PREP_STALL);
     let t = Date.now();
     const jpeg = await toJpeg(file);
     state.jpegBlob = jpeg.blob; // localCrop's worker-less fallback source
@@ -759,7 +777,7 @@ async function onPhoto(file) {
       state.tier2 = null;
       state.cropDataUrl = "data:image/jpeg;base64," + (await blobToB64(jpeg.blob));
       state.verdicts.push({ tier: 0, code: "", action: "extract_off" });
-      return showManual("Sorry! automatic code reading is switched off right now. Type the code from the sign:");
+      return showManual(MSG.EXTRACT_OFF);
     }
 
     // One network pass: the photo rides inline in extract. `keep` echoes the
@@ -777,11 +795,11 @@ async function onPhoto(file) {
 
     // Upload and read are one POST; the upload events split the status line
     // so a slow phase names itself (uplink stall vs GCV/server stall).
-    busy("Uploading photo…", "Still uploading… weak signal?");
+    busy(MSG.UPLOADING, MSG.UPLOADING_STALL);
     t = Date.now();
     const res = await apiUpload("/api/extract", extractBody, {
-      onProgress: (f) => { $("busy-msg").textContent = "Uploading photo… " + Math.round(f * 100) + "%"; },
-      onSent: () => busy("Reading the sign…", "Still reading… hang on…"),
+      onProgress: (f) => { $("busy-msg").textContent = MSG.UPLOADING_PCT(Math.round(f * 100)); },
+      onSent: () => busy(MSG.READING, MSG.READING_STALL),
     });
     state.timings.extractMs = Date.now() - t;
     state.timings.server = res.serverTimings; // per-step server breakdown → verdict.json
@@ -820,7 +838,7 @@ async function onPhoto(file) {
     // With Claude circuit-broken (mode gcv) tier 2 never runs — the manual
     // screen with the tier-1 read prefilled is the fallback.
     if (!state.tier2 && state.extractMode === "full") {
-      await callEscalate("Asking Claude for a closer look…");
+      await callEscalate(MSG.ESCALATE);
     }
     const code2 = state.tier2 ? norm(state.tier2.code) : "";
     if (autoMode()) {
@@ -843,7 +861,7 @@ async function reject() {
   // Claude circuit-broken: "trying harder" means the human fixes it by hand.
   if (state.extractMode !== "full") return showManual();
   try {
-    await callEscalate("Asking Claude for a closer look…");
+    await callEscalate(MSG.ESCALATE);
     showManual();
   } catch (err) { fail(err); }
 }
@@ -856,9 +874,7 @@ function openHandoff(code) {
   const win = window.open(url, "_blank");
   $("d-code").textContent = code;
   $("d-link").href = url;
-  $("d-status").textContent = win
-    ? "aadl.org opened in a new tab with your code prefilled."
-    : "Tap below to open aadl.org with your code prefilled:";
+  $("d-status").textContent = win ? MSG.HANDOFF_OPENED : MSG.HANDOFF_BLOCKED;
   show("v-done");
 }
 
@@ -912,7 +928,7 @@ function hiddenMessage(results) {
 
 async function submitToAadl(code) {
   const accounts = activeAccounts();
-  busy("Submitting to AADL…", "Still submitting… aadl.org is slow right now…");
+  busy(MSG.SUBMITTING, MSG.SUBMITTING_STALL);
   const t = Date.now();
   const res = await api("/api/submit", {
     sessionId: state.sessionId,
@@ -937,17 +953,17 @@ async function submitToAadl(code) {
   if (rejected && ocrCode && !state.tier2 && !state.autoEscalated && state.extractMode === "full") {
     state.autoEscalated = true;
     state.verdicts.push({ tier: state.presented.tier, code, action: "aadl_rejected" });
-    const r = await callEscalate("AADL didn't recognize it, asking Claude…");
+    const r = await callEscalate(MSG.ESCALATE_ORACLE);
     const newCode = norm(r.tier2.code);
     if (newCode && newCode !== code) {
       state.verdicts.push({ tier: 2, code: newCode, action: "auto_submitted" });
       return finish(newCode, "tier2_auto");
     }
-    return showManual('AADL didn’t recognize “' + code + '”. Check it against the photo:');
+    return showManual(MSG.NOT_RECOGNIZED(code));
   }
   if (rejected && ocrCode) {
     state.verdicts.push({ tier: state.presented.tier, code, action: "aadl_rejected" });
-    return showManual('AADL didn’t recognize “' + code + '”. Check it against the photo:');
+    return showManual(MSG.NOT_RECOGNIZED(code));
   }
 
   $("s-code").textContent = code;

@@ -15,9 +15,9 @@ Runs in a Docker container in a Lambda in AWS.
 1. **Tier 1 — Google Cloud Vision** on a 2400px q0.7 JPEG posted inline.
    Post-processing isolates the code line: subtract the sign's printed
    phrases, take the tallest remaining line, gate on min word confidence.
-2. **Tier 2 — Claude on a crop** when the gate fails or the user rejects:
+2. **Tier 2 — Bedrock on a crop** when the gate fails or the user rejects:
    the client cuts a high-res crop from its original photo at the line bbox
-   tier 1 returned, and Claude (Bedrock) transcribes it glyph-by-glyph.
+   tier 1 returned, and Bedrock (Sonnet 4.6 initially) transcribes it glyph-by-glyph.
 3. **Manual prefilled** — the best guess lands in an editable field, to be
    tweaked before submitting.
 4. **Submit** to aadl.org for every connected account/player (or a `?text=`
@@ -79,7 +79,7 @@ Harness-specific commands (offline analysis, tier-2 crop experiments, etc.):
 1. **Node 22**
 2. **AWS**: credentials via the standard chain (this project uses IAM Identity
    Center SSO profiles), region set. Bedrock model access enabled for the
-   Claude reader (per-account Marketplace subscription).
+   Bedrock reader (per-account Marketplace subscription).
 3. **GCP**: a service-account JSON with the Vision API enabled;
    `GOOGLE_APPLICATION_CREDENTIALS` pointed at it (or inline via
    `GCP_SA_KEY_JSON`).

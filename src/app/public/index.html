@@ -119,9 +119,10 @@
   <div class="view" id="v-home">
     <button class="primary big" id="btn-photo">&#128247; Photograph a sign</button>
     <p class="tag">Get as close as you can! Fill the frame with the sign, keep
-    the code as straight as possible, and do your best to keep other signs or
-    house numbers out of the shot.</p>
+    the code as straight as possible, and do your best to keep other signs,
+    house numbers, or any other words out of the shot.</p>
     <input type="file" id="file" accept="image/*" capture="environment" hidden>
+    <button class="ghost wide" id="btn-manual">&#9000;&#65039; Type a code by hand</button>
     <div class="card">
       <div id="acct-list"><p class="tag">No AADL account connected. Codes will
       open aadl.org for you to submit yourself.</p></div>
@@ -242,7 +243,7 @@
       frame with the sign, keep the code as straight as possible, and do your
       best to keep other signs or house numbers out of the shot.</p>
       <p>&#128269; <b>The app reads the handwriting.</b> Most codes are read
-      quickly. Tricky ones get a closer look from Claude.</p>
+      quickly. Tricky ones get a closer look using Bedrock.</p>
       <p>&#127942; <b>Connect your AADL account.</b> If you log in to your
       AADL account, codes are submitted automatically for every player you
       check. This makes the majority of codes completely automatic once you
@@ -333,7 +334,7 @@ function show(view, busyMsg) {
 
 // Per-phase busy screen: primary line plus a "still working" second line that
 // appears only when the phase overruns STALL_MS. Slow phone uplink and
-// GCV/Claude tail spikes are field-normal; silence past a few seconds reads
+// GCV/Bedrock tail spikes are field-normal; silence past a few seconds reads
 // as a hang, and the second line is how we see WHICH step is the slow one.
 const STALL_MS = 4000;
 let stallTimer = null;
@@ -702,8 +703,8 @@ async function escalateBody() {
   return { sessionId: state.sessionId, crop: await ensureCrop(), keep: state.storeImages };
 }
 
-// Shared tier-2 escalation: crop + Claude in one POST. The stall line names
-// the slow half — crop still uploading vs Claude thinking.
+// Shared tier-2 escalation: crop + Bedrock in one POST. The stall line names
+// the slow half — crop still uploading vs Bedrock thinking.
 async function callEscalate(lead) {
   busy(lead, MSG.ESCALATE_SEND_STALL);
   const t = Date.now();
@@ -717,7 +718,7 @@ async function callEscalate(lead) {
 }
 
 // Only ever shows the tier-1 read, and only on the no-account path — with an
-// account connected everything auto-submits, and Claude's read goes straight
+// account connected everything auto-submits, and Bedrock's read goes straight
 // to the manual screen as its prefill.
 async function presentResult(code) {
   state.presented = { tier: 1, code };
@@ -734,7 +735,10 @@ async function showManual(notice) {
     : "Type the code as written:";
   $("m-note").textContent = notice || "";
   $("m-note").hidden = !notice;
-  $("m-crop").src = await ensureCrop();
+  // No crop on the type-a-code-by-hand path — hide the image slot entirely.
+  const crop = await ensureCrop();
+  if (crop) $("m-crop").src = crop; else $("m-crop").removeAttribute("src");
+  $("m-crop").hidden = !crop;
   $("m-input").value = prefill;
   $("m-submit").textContent = activeAccounts().length
     ? "✓ Submit to AADL" : "✓ Submit at aadl.org";
@@ -754,6 +758,16 @@ async function showManual(notice) {
 let pendingSession = null;
 function prefetchSession() {
   pendingSession = api("/api/session").catch(() => null);
+}
+
+// Manual-entry path: the session is prefetched when the button is tapped and
+// resolved here at submit time (the photo path assigns it in onPhoto instead).
+async function ensureSession() {
+  if (state.sessionId) return;
+  const s = (await pendingSession) ?? (await api("/api/session"));
+  pendingSession = null;
+  state.sessionId = s.sessionId;
+  state.storeImages = s.storeImages !== false;
 }
 
 async function onPhoto(file) {
@@ -849,7 +863,7 @@ async function onPhoto(file) {
       tier: 1, code: res.tier1.code, minConf: res.tier1.minConf,
       action: res.tier1.gatePassed ? "auto_skipped_toolong" : "auto_skipped_gate",
     });
-    // With Claude circuit-broken (mode gcv) tier 2 never runs — the manual
+    // With Bedrock circuit-broken (mode gcv) tier 2 never runs — the manual
     // screen with the tier-1 read prefilled is the fallback.
     if (!state.tier2 && state.extractMode === "full") {
       await callEscalate(MSG.ESCALATE);
@@ -863,16 +877,16 @@ async function onPhoto(file) {
       }
       return showManual(); // nothing usable from either reader — the kept fallback
     }
-    showManual(); // no-account: Claude's guess is the manual screen's prefill
+    showManual(); // no-account: Bedrock's guess is the manual screen's prefill
   } catch (err) { fail(err); }
 }
 
-// "Try harder" on the tier-1 result: ask Claude, land on the manual screen
+// "Try harder" on the tier-1 result: ask Bedrock, land on the manual screen
 // with its read prefilled.
 async function reject() {
   const { tier, code } = state.presented;
   state.verdicts.push({ tier, code, action: "rejected" });
-  // Claude circuit-broken: "trying harder" means the human fixes it by hand.
+  // Bedrock circuit-broken: "trying harder" means the human fixes it by hand.
   if (state.extractMode !== "full") return showManual();
   try {
     await callEscalate(MSG.ESCALATE);
@@ -1033,6 +1047,14 @@ async function submitToAadl(code) {
 
 // ---- wiring ----
 $("btn-photo").onclick = () => { prefetchSession(); $("file").click(); };
+// Straight to manual entry — no photo, no extraction, no guessing.
+$("btn-manual").onclick = () => {
+  prefetchSession();
+  state = { t0: Date.now(), verdicts: [], timings: {},
+            tier1: { code: "" }, tier2: null, manualOnly: true };
+  state.verdicts.push({ tier: 0, code: "", action: "manual_only" });
+  showManual();
+};
 // "New photo" on the success screens: reset like home(), then reopen the
 // camera in the same click (the synchronous .click() keeps the user-gesture).
 function newPhoto() { home(); prefetchSession(); $("file").click(); }
@@ -1047,12 +1069,15 @@ $("r-approve").onclick = () => {
   finish(code, "tier" + tier);
 };
 $("r-reject").onclick = reject;
-$("m-submit").onclick = () => {
+$("m-submit").onclick = async () => {
   const code = norm($("m-input").value);
   if (!code) return;
   $("m-submit").disabled = true;
+  // Manual-only sessions resolve the prefetched sessionId here (normally a
+  // no-op await — the round-trip finished while the user typed).
+  try { await ensureSession(); } catch (err) { return fail(err); }
   state.verdicts.push({ tier: 3, code, action: "manual_entry" });
-  finish(code, "manual");
+  finish(code, state.manualOnly ? "manual_direct" : "manual");
 };
 $("d-copy").onclick = async () => {
   try { await navigator.clipboard.writeText($("d-code").textContent); $("d-copy").textContent = "Copied ✓"; }
@@ -1152,6 +1177,18 @@ async function promptInstall() {
 $("install-android").onclick = promptInstall;
 $("f-a2hs").onclick = async (e) => { e.preventDefault(); if (!(await promptInstall())) overlay("v-howto"); };
 addEventListener("appinstalled", hideInstall);
+
+// Unique-visitor beacon: a random id (no PII), sent at most once per
+// browser-day. The server buckets by Detroit day; this date is throttle-only.
+try {
+  let vid = localStorage.getItem("vid");
+  if (!vid) { vid = crypto.randomUUID(); localStorage.setItem("vid", vid); }
+  const vday = new Date().toISOString().slice(0, 10);
+  if (localStorage.getItem("vday") !== vday) {
+    api("/api/visit", { visitorId: vid })
+      .then(() => localStorage.setItem("vday", vday)).catch(() => {});
+  }
+} catch { /* storage blocked: skip counting, never block the app */ }
 
 home();
 </script>

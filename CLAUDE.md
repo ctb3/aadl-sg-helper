@@ -122,7 +122,18 @@ compact per-session records — NO code strings, the endpoint is public and
 codes are redeemable — at sessions/_summary/v<ver>/<day>.json once the day is
 ≥2 Detroit days old (late resubmits mutate submit.json before that); open days
 compute fresh; whole payload memoized in-process 60s. Force recompute: delete
-the cache object or bump SCHEMA in dash.ts. Required prefix-scoped
+the cache object or bump SCHEMA in dash.ts.
+Manual entry (v1.2.4): home-screen "Type a code by hand" button jumps straight
+to v-manual — no photo, no extract.json; sessionId is prefetched on tap and
+resolved at submit (ensureSession). Source logs as `manual_direct` (photo-path
+manual stays `manual`). buildRow tolerates missing extract.json (Row.manual);
+dash/sessions-report count manual sessions in totals/sources/submits but
+EXCLUDE them from every extraction stat (gate/t1/t2/buckets/latency). Unique
+visitors (v1.2.4): client beacon POST /api/visit (random localStorage UUID,
+once per browser-day, no PII) → idempotent put at
+sessions/_visits/<detroit-day>/<vid>.json (inside the existing sessions/* IAM
+grants — no boundary change); dash sweeps the prefix into a visitors tile.
+Required prefix-scoped
 s3:ListBucket in BOTH app/iam.tf and the bootstrap boundary — bootstrap
 re-apply is manual (admin SSO, per account) BEFORE the deploy (infra/README).
 Versioning is tag-driven: prod ships package.json's version verbatim (CI

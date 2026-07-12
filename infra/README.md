@@ -105,10 +105,10 @@ Each account is independent, so test and prod toggle separately.
   only the telemetry JSON) — so accuracy/speed reporting is unaffected either
   way. See `src/app/sessions-report.ts --summary` for the cross-version rollup.
 - **`extract-mode`** (default enabled, `mode=full`): the reader cost circuit
-  breaker. One flag, not two booleans, because Claude-without-GCV is not a
+  breaker. One flag, not two booleans, because Bedrock-without-GCV is not a
   valid state (tier 2 reads GCV's chosen-line crop).
-  - enabled + `mode=full` — normal: GCV tier 1, Claude tier-2 escalation.
-  - enabled + `mode=gcv` — Claude off: gate failures, "Try harder", and
+  - enabled + `mode=full` — normal: GCV tier 1, Bedrock tier-2 escalation.
+  - enabled + `mode=gcv` — Bedrock off: gate failures, "Try harder", and
     AADL-rejected reads all land on the manual screen with the tier-1 read
     prefilled. Use this if GCV alone proves good enough.
   - **disabled** — reading fully off: the client skips upload+extract after
@@ -144,7 +144,7 @@ PROF=$(aws appconfig list-configuration-profiles --application-id "$APP" --query
 STRAT=$(aws appconfig list-deployment-strategies --query "Items[?Name=='aadl-sg-flip'].Id" --output text)
 # The full document — edit the values you want to flip:
 #   store-images enabled:false        → stop persisting images
-#   extract-mode mode:"gcv"           → Claude off, GCV only
+#   extract-mode mode:"gcv"           → Bedrock off, GCV only
 #   extract-mode enabled:false        → no automatic reading at all
 cat > /tmp/flag.json <<'EOF'
 {"version":"1",

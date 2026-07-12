@@ -1,6 +1,6 @@
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { ListObjectsV2Command, PutObjectCommand } from "@aws-sdk/client-s3";
 import { normalize } from "../core/score";
-import { buildRow, bucket, collectIds, getJson, listVersionPrefixes, pctl, Row, s3 } from "./sessions";
+import { buildRow, bucket, collectIds, dayOf, getJson, listVersionPrefixes, pctl, Row, s3 } from "./sessions";
 
 /**
  * Stats behind GET /api/dash-stats (the /dash page). Aggregates every field
@@ -19,12 +19,13 @@ import { buildRow, bucket, collectIds, getJson, listVersionPrefixes, pctl, Row, 
  * codes are live redeemable secrets and the endpoint has no auth.
  */
 
-const SCHEMA = 2;
+const SCHEMA = 3;
 const MEMO_TTL_MS = 60_000;
 const MAX_DAYS = 60;
 
 interface SessionStat {
   id: string; // dedupe key; day derivable from the epoch prefix
+  manual: boolean; // typed-by-hand session: excluded from every extraction stat
   completed: boolean; // truth !== null (else abandoned)
   gate: boolean;
   t1ok: boolean | null; // null when abandoned
@@ -52,6 +53,9 @@ interface Agg {
   sessions: number;
   completed: number;
   abandoned: number;
+  /** typed-by-hand sessions (counted in the three fields above, excluded from
+   * every extraction stat below). */
+  manualSessions: number;
   gatePassRate: { n: number; d: number };
   t1Correct: { n: number; d: number };
   t2CorrectWhenRun: { n: number; d: number };
@@ -72,17 +76,9 @@ export interface DashPayload {
   totals: Agg;
   byDay: Array<{ key: string; sealed: boolean } & Agg>;
   byVersion: Array<{ key: string } & Agg>;
+  /** unique-visitor beacon counts (sessions/_visits/<day>/<vid>.json). */
+  visits: { total: number; byDay: Array<{ day: string; n: number }> };
 }
-
-// Detroit-local days: field batches happen Ann Arbor evenings, which UTC
-// would split across two dates.
-const dayFmt = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "America/Detroit",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-});
-const dayOf = (epochMs: number): string => dayFmt.format(new Date(epochMs));
 
 /** Sealed = ≥2 Detroit days old (yyyy-mm-dd compares lexically). */
 const isSealed = (day: string): boolean => day < dayOf(Date.now() - 24 * 3600 * 1000);
@@ -119,6 +115,7 @@ function toStat(r: Row): SessionStat {
   const rejected = o.verdict === "rejected";
   return {
     id: r.id,
+    manual: r.manual,
     completed: truth !== null,
     gate: r.gate,
     t1ok: truth !== null ? !rejected && r.t1code === truth : null,
@@ -134,16 +131,20 @@ function latStat(xs: number[]): LatStat {
 }
 
 function agg(stats: SessionStat[]): Agg {
-  const done = stats.filter((s) => s.completed);
+  // Extraction stats (gate/t1/t2/buckets/latency) only make sense for photo
+  // sessions; manual entries count in the session totals and nothing else.
+  const ext = stats.filter((s) => !s.manual);
+  const done = ext.filter((s) => s.completed);
   const t1Wrong = done.filter((s) => s.t1ok === false);
   const t2Ran = done.filter((s) => s.t2ran);
   const L = (k: keyof SessionStat["lat"]): number[] =>
-    stats.map((s) => s.lat[k]).filter((x): x is number => typeof x === "number");
+    ext.map((s) => s.lat[k]).filter((x): x is number => typeof x === "number");
   return {
     sessions: stats.length,
-    completed: done.length,
-    abandoned: stats.length - done.length,
-    gatePassRate: { n: stats.filter((s) => s.gate).length, d: stats.length },
+    completed: stats.filter((s) => s.completed).length,
+    abandoned: stats.filter((s) => !s.completed).length,
+    manualSessions: stats.length - ext.length,
+    gatePassRate: { n: ext.filter((s) => s.gate).length, d: ext.length },
     t1Correct: { n: done.filter((s) => s.t1ok === true).length, d: done.length },
     t2CorrectWhenRun: { n: t2Ran.filter((s) => s.t2ok === true).length, d: t2Ran.length },
     buckets: {
@@ -202,6 +203,30 @@ async function cellStats(
   return sessions;
 }
 
+/** Sweep sessions/_visits/<day>/<vid>.json into per-day and overall uniques. */
+async function visitStats(): Promise<DashPayload["visits"]> {
+  const byDay = new Map<string, number>();
+  const vids = new Set<string>();
+  let token: string | undefined;
+  do {
+    const page = await s3.send(
+      new ListObjectsV2Command({ Bucket: bucket, Prefix: "sessions/_visits/", ContinuationToken: token }),
+    );
+    for (const o of page.Contents ?? []) {
+      const m = o.Key!.match(/^sessions\/_visits\/([^/]+)\/([^/]+)\.json$/);
+      if (!m) continue;
+      byDay.set(m[1], (byDay.get(m[1]) ?? 0) + 1);
+      vids.add(m[2]);
+    }
+    token = page.NextContinuationToken;
+  } while (token);
+  return {
+    total: vids.size,
+    byDay: [...byDay.keys()].sort().reverse().slice(0, MAX_DAYS)
+      .map((day) => ({ day, n: byDay.get(day)! })),
+  };
+}
+
 async function compute(appVersion: string): Promise<DashPayload> {
   const byDay = new Map<string, SessionStat[]>();
   const byVersion = new Map<string, SessionStat[]>();
@@ -225,6 +250,7 @@ async function compute(appVersion: string): Promise<DashPayload> {
   return {
     generatedAt: new Date().toISOString(),
     appVersion: appVersion,
+    visits: await visitStats(),
     totals: agg(all),
     byDay: [...byDay.keys()]
       .sort()

@@ -33,10 +33,10 @@ async function main(): Promise<void> {
   for (const r of rows) {
     const t = r.timings;
     const ok = (code: string | null): string =>
-      code === null ? "-" : r.truth === null ? code : `${code}${code === r.truth ? " ✓" : " ✗"}`;
+      code === null || r.manual ? "-" : r.truth === null ? code : `${code}${code === r.truth ? " ✓" : " ✗"}`;
     const lastSubmit = r.submits.at(-1);
     const notes = [
-      r.usedLine ? "" : "no-line",
+      r.manual ? "manual" : (r.usedLine ? "" : "no-line"),
       r.truth === null ? "ABANDONED" : "",
       r.t2How === "auto" ? "auto-t2" : "",
       lastSubmit ? `sub:${[...new Set(lastSubmit.results.map((x: any) => x.outcome))].join("/")}` : "",
@@ -56,18 +56,23 @@ async function main(): Promise<void> {
   }
 
   const done = rows.filter((r) => r.truth !== null);
-  const gatePassed = rows.filter((r) => r.gate);
-  const t1RightOfDone = done.filter((r) => r.t1code === r.truth);
-  const gateDone = done.filter((r) => r.gate);
+  // Extraction accuracy only makes sense for photo sessions; manual entries
+  // (typed-by-hand from home) count in totals/sources/submits and nothing else.
+  const photo = rows.filter((r) => !r.manual);
+  const pDone = photo.filter((r) => r.truth !== null);
+  const gatePassed = photo.filter((r) => r.gate);
+  const t1RightOfDone = pDone.filter((r) => r.t1code === r.truth);
+  const gateDone = pDone.filter((r) => r.gate);
   const gateRight = gateDone.filter((r) => r.t1code === r.truth);
-  const t2Done = done.filter((r) => r.t2code !== null);
+  const t2Done = pDone.filter((r) => r.t2code !== null);
   const t2Right = t2Done.filter((r) => r.t2code === r.truth);
   const bySource = new Map<string, number>();
   for (const r of done) bySource.set(r.source!, (bySource.get(r.source!) ?? 0) + 1);
 
-  console.log(`\n== accuracy (${done.length} completed, ${rows.length - done.length} abandoned)`);
-  console.log(`gate pass rate:            ${pct(gatePassed.length, rows.length)}`);
-  console.log(`tier1 correct (completed): ${pct(t1RightOfDone.length, done.length)}`);
+  const manual = rows.length - photo.length;
+  console.log(`\n== accuracy (${done.length} completed, ${rows.length - done.length} abandoned${manual ? `, ${manual} manual — excluded below` : ""})`);
+  console.log(`gate pass rate:            ${pct(gatePassed.length, photo.length)}`);
+  console.log(`tier1 correct (completed): ${pct(t1RightOfDone.length, pDone.length)}`);
   console.log(`tier1 correct when gated:  ${pct(gateRight.length, gateDone.length)}  <- instant-answer precision`);
   console.log(`tier2 correct when run:    ${pct(t2Right.length, t2Done.length)}`);
   console.log(`final source:              ${[...bySource].map(([k, v]) => `${k}=${v}`).join("  ")}`);
@@ -120,7 +125,7 @@ async function main(): Promise<void> {
     );
   }
   if (T("cropLocalMs").length) console.log(`local crop (client, from original): ${stats(T("cropLocalMs"))}`);
-  console.log(`escalate: ${stats(T("escalateMs"))}  (server Claude: ${stats(rows.map((r) => r.t2LatMs!).filter((x) => x != null))})`);
+  console.log(`escalate: ${stats(T("escalateMs"))}  (server Bedrock: ${stats(rows.map((r) => r.t2LatMs!).filter((x) => x != null))})`);
   const E = (k: string): number[] =>
     rows.map((r) => r.escServerT[k]).filter((x): x is number => typeof x === "number");
   if (E("tier2Ms").length) {
@@ -169,16 +174,19 @@ async function summary(): Promise<void> {
   for (const v of versions) {
     const rs = byVer.get(v)!;
     const done = rs.filter((r) => r.truth !== null);
-    const gd = done.filter((r) => r.gate);
-    const t2d = done.filter((r) => r.t2code !== null);
+    // Manual (typed-by-hand) sessions count in seen/done, never in tier stats.
+    const photo = rs.filter((r) => !r.manual);
+    const pd = photo.filter((r) => r.truth !== null);
+    const gd = pd.filter((r) => r.gate);
+    const t2d = pd.filter((r) => r.t2code !== null);
     console.log(
       v.slice(0, 25).padEnd(26) +
       String(rs.length).padEnd(6) + String(done.length).padEnd(6) +
       String(rs.length - done.length).padEnd(7) +
-      rate(done.filter((r) => r.t1code === r.truth).length, done.length).padEnd(15) +
+      rate(pd.filter((r) => r.t1code === r.truth).length, pd.length).padEnd(15) +
       rate(gd.filter((r) => r.t1code === r.truth).length, gd.length).padEnd(15) +
       rate(t2d.filter((r) => r.t2code === r.truth).length, t2d.length).padEnd(15) +
-      rate(rs.filter((r) => r.gate).length, rs.length),
+      rate(photo.filter((r) => r.gate).length, photo.length),
     );
   }
 

@@ -24,6 +24,9 @@ export async function getJson(key: string): Promise<any | null> {
 export interface Row {
   version: string;
   id: string;
+  /** manual-entry-from-home session: no photo, no extract.json — nothing to
+   * score for extraction accuracy, but submits/verdicts still count. */
+  manual: boolean;
   at: string;
   photo: { width?: number; height?: number; bytes?: number };
   t1code: string;
@@ -97,6 +100,16 @@ export async function collectIds(prefix: string): Promise<string[]> {
 
 export const versionOf = (prefix: string): string => prefix.match(/v([^/]+)\/$/)?.[1] ?? prefix;
 
+// Detroit-local days: field batches happen Ann Arbor evenings, which UTC
+// would split across two dates. Shared by the dash and the visit beacon.
+const dayFmt = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Detroit",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+export const dayOf = (epochMs: number): string => dayFmt.format(new Date(epochMs));
+
 /** Load one session's JSON trail into a Row (null when there's nothing to analyze). */
 export async function buildRow(prefix: string, id: string): Promise<Row | null> {
   const [extract, tier2, verdict, submit] = await Promise.all([
@@ -105,20 +118,23 @@ export async function buildRow(prefix: string, id: string): Promise<Row | null> 
     getJson(`${prefix}${id}/verdict.json`),
     getJson(`${prefix}${id}/submit.json`),
   ]);
-  if (!extract) return null;
-  const t2 = tier2?.tier2 ?? extract.tier2 ?? null;
+  // Manual-entry sessions never call /api/extract; they still have a
+  // verdict/submit trail worth reporting. Nothing at all → skip.
+  if (!extract && !verdict && !submit) return null;
+  const t2 = tier2?.tier2 ?? extract?.tier2 ?? null;
   return {
     version: versionOf(prefix),
     id,
-    at: extract.at ?? new Date(Number(id.split("-")[0])).toISOString(),
-    photo: extract.photo ?? {},
-    t1code: normalize(extract.tier1?.code ?? ""),
-    minConf: extract.tier1?.minConf ?? null,
-    gate: !!extract.tier1?.gatePassed,
-    usedLine: !!extract.tier1?.usedLine,
-    t1LatMs: extract.tier1?.latencyMs ?? null,
+    manual: !extract,
+    at: extract?.at ?? new Date(Number(id.split("-")[0])).toISOString(),
+    photo: extract?.photo ?? {},
+    t1code: normalize(extract?.tier1?.code ?? ""),
+    minConf: extract?.tier1?.minConf ?? null,
+    gate: !!extract?.tier1?.gatePassed,
+    usedLine: !!extract?.tier1?.usedLine,
+    t1LatMs: extract?.tier1?.latencyMs ?? null,
     t2code: t2 ? normalize(t2.code ?? "") : null,
-    t2How: t2 ? (extract.tier2 ? "auto" : "escalated") : null,
+    t2How: t2 ? (extract?.tier2 ? "auto" : "escalated") : null,
     t2LatMs: t2?.latencyMs ?? null,
     truth: verdict?.finalCode ? normalize(verdict.finalCode) : null,
     source: verdict?.source ?? null,
@@ -126,7 +142,7 @@ export async function buildRow(prefix: string, id: string): Promise<Row | null> 
     timings: verdict?.timings ?? {},
     // extract.json's copy misses s3PutJsonMs/totalMs (it can't time its own
     // write); the client-plumbed copy in verdict.json has them, so prefer it.
-    serverT: verdict?.timings?.server ?? extract.serverTimings ?? {},
+    serverT: verdict?.timings?.server ?? extract?.serverTimings ?? {},
     escServerT: verdict?.timings?.escalateServer ?? tier2?.serverTimings ?? {},
     clientMs: typeof verdict?.clientMs === "number" ? verdict.clientMs : null,
     submits: submit?.attempts ?? [],

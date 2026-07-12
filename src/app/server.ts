@@ -12,6 +12,7 @@ import { extractMode, storeImages } from "./flags";
 import { MANIFEST_JSON, icon, isIcon } from "./icons";
 import { runTier1, runTier2 } from "./pipeline";
 import { loadSecrets } from "./secrets";
+import { dayOf } from "./sessions";
 
 /**
  * App server. Plain node:http (pattern: label.ts); runs unchanged
@@ -256,6 +257,19 @@ async function handleVerdict(body: Record<string, unknown>): Promise<unknown> {
   return { ok: true };
 }
 
+// Unique-visitor beacon: a random client-generated id, one idempotent PUT per
+// (Detroit day, visitor). The id becomes an S3 key segment — validate hard.
+const VISITOR_ID_RE = /^[a-zA-Z0-9-]{8,64}$/;
+
+async function handleVisit(body: Record<string, unknown>): Promise<unknown> {
+  const vid = body.visitorId;
+  if (typeof vid !== "string" || !VISITOR_ID_RE.test(vid)) throw new Error("bad visitorId");
+  await s3PutJson(`sessions/_visits/${dayOf(Date.now())}/${vid}.json`, {
+    at: new Date().toISOString(),
+  });
+  return { ok: true };
+}
+
 // AADL credentials/cookies pass through these two handlers and are never
 // persisted or logged — the client holds the cookie blob (see aadl.ts).
 
@@ -332,6 +346,7 @@ const API: Record<string, (body: Record<string, unknown>) => Promise<unknown>> =
   "/api/extract": handleExtract,
   "/api/escalate": handleEscalate,
   "/api/verdict": handleVerdict,
+  "/api/visit": handleVisit,
   "/api/aadl/connect": handleAadlConnect,
   "/api/submit": handleSubmit,
 };

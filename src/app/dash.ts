@@ -59,7 +59,10 @@ interface Agg {
   gatePassRate: { n: number; d: number };
   t1Correct: { n: number; d: number };
   t2CorrectWhenRun: { n: number; d: number };
-  /** counts over completed sessions; the last two split the t1-wrong cases. */
+  /** counts over completed sessions. Delivery-based: t1Correct only when
+   * tier 2 never ran (a gate-failed session whose GCV text happened to match
+   * the final code is tier-2's win — the user never saw a tier-1 prefill).
+   * The last two split the t1-read-wrong cases. */
   buckets: {
     t1Correct: number;
     t1WrongT2Caught: number;
@@ -137,6 +140,9 @@ function agg(stats: SessionStat[]): Agg {
   const done = ext.filter((s) => s.completed);
   const t1Wrong = done.filter((s) => s.t1ok === false);
   const t2Ran = done.filter((s) => s.t2ran);
+  // Disjoint by construction: t1Delivered requires !t2ran, t2Caught requires t2ran.
+  const t1Delivered = (s: SessionStat): boolean => s.t1ok === true && !s.t2ran;
+  const t2Caught = (s: SessionStat): boolean => s.t2ran && s.t2ok === true;
   const L = (k: keyof SessionStat["lat"]): number[] =>
     ext.map((s) => s.lat[k]).filter((x): x is number => typeof x === "number");
   return {
@@ -148,9 +154,9 @@ function agg(stats: SessionStat[]): Agg {
     t1Correct: { n: done.filter((s) => s.t1ok === true).length, d: done.length },
     t2CorrectWhenRun: { n: t2Ran.filter((s) => s.t2ok === true).length, d: t2Ran.length },
     buckets: {
-      t1Correct: done.filter((s) => s.t1ok === true).length,
-      t1WrongT2Caught: t1Wrong.filter((s) => s.t2ran && s.t2ok === true).length,
-      bothWrong: t1Wrong.filter((s) => !s.t2ran || s.t2ok === false).length,
+      t1Correct: done.filter(t1Delivered).length,
+      t1WrongT2Caught: done.filter(t2Caught).length,
+      bothWrong: done.filter((s) => !t1Delivered(s) && !t2Caught(s)).length,
       t1WrongGateFail: t1Wrong.filter((s) => !s.gate).length,
       t1WrongGatePassed: t1Wrong.filter((s) => s.gate).length,
     },

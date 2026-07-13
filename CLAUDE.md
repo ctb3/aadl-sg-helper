@@ -24,8 +24,9 @@ The submission response IS the validation oracle: "Code is not recognized"
 (traceless server-side — no ledger row, doesn't count against the rate limit)
 triggers tier-2 escalation; "already redeemed" confirms a correct read. Only
 real risk: a misread colliding with a *different* valid code awards wrong
-points — why approve-before-submit stays the default (full-auto is a client
-toggle, default off).
+points — accepted as negligible (decision 2026-07-13): any session with a
+connected account auto-submits (no approve screen, no toggle); the approve
+flow only exists for the no-account handoff path.
 
 ## The one governing constraint
 
@@ -69,7 +70,14 @@ aadl.org for every connected account/player (or the ?text= handoff link when
 none is connected). Rejected submits offer/auto-run tier-2 escalation
 (submit.json logs each attempt per session, cookie-free; verdict.json and
 submit.json stay separate so extraction accuracy and submission health are
-independently attributable). Transport (v0.5 speed push): the client posts a
+independently attributable). Probe-first (v1.2.5): a gate-FAILED tier-1 read
+with an account connected is submitted straight to aadl.org as an oracle
+probe BEFORE any Bedrock call (not_recognized is traceless and free; a right
+low-conf read skips tier 2 entirely) — rejection reuses submitToAadl's
+oracle-escalation path (tier 2, then manual). Verdict action
+`auto_probe_submitted`, source `tier1_probe` (overwritten to `tier2_auto` by
+the re-finish when the probe misses). No-account and empty-read sessions keep
+the old escalate-then-manual path. Transport (v0.5 speed push): the client posts a
 2400px q0.7 JPEG INLINE in /api/extract (one network pass; GCV starts on
 arrival; server persists photo.jpg overlapped with GCV when store-images is
 on — client echoes the session's verdict as `keep`). Tier-2 crops are cut by
@@ -110,9 +118,13 @@ accuracy/speed reporting is unaffected. `sessions-report.ts
 rates, gate%, per-step avg·p99); the default (no flag / a prefix arg) stays the
 single-version detail view. Telemetry lives in the per-session JSON (durable
 event log; summary computed on read) — never gated by the flag.
-GET /dash (v1.2.0, public like the app) is the web rollup: 3-bucket tier-1
-outcome (t1 ✓ / t1 ✗ but tier-2 caught / both ✗), tier1/tier2 correct %, and
-med·p90 latency, by Detroit-local day and by version. Data via GET
+GET /dash (v1.2.0, public like the app) is the web rollup: 3-bucket outcome
+bar — delivery-based since v1.2.5: t1 ✓ requires tier 2 never ran (a
+gate-failed session whose GCV text matched the final code is tier-2's win) /
+tier-2 caught / both ✗ — tier1/tier2 correct %, and
+med·p90 latency, by Detroit-local day and by version. The "Tier 1 read
+correct" tile stays raw GCV read accuracy (gate ignored), like the CLI's
+non-gated metric. Data via GET
 /api/dash-stats (src/app/dash.ts; session loading + stat helpers shared with
 the CLI through src/app/sessions.ts). Dash truth = the AADL submit oracle when
 the session submitted (accepted attempt's code confirms; rejected scores the

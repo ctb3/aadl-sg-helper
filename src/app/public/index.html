@@ -857,6 +857,20 @@ async function onPhoto(file) {
       return presentResult(res.tier1.code);
     }
 
+    // Gate fail but tier 1 read *something*: with accounts connected, AADL
+    // itself is a cheaper oracle than Bedrock — submit the low-confidence
+    // read as a probe (not_recognized is traceless server-side, costs
+    // nothing). submitToAadl's oracle path escalates to tier 2 only when
+    // the probe misses.
+    if (autoMode() && validCode(res.tier1.code)) {
+      state.presented = { tier: 1, code: res.tier1.code };
+      state.verdicts.push({
+        tier: 1, code: res.tier1.code, minConf: res.tier1.minConf,
+        action: "auto_probe_submitted",
+      });
+      return finish(res.tier1.code, "tier1_probe");
+    }
+
     // Tier 1 is unusable: gate failure or a nonsense read the gate let
     // through — either way we escalate (or fall to manual) ourselves.
     state.verdicts.push({

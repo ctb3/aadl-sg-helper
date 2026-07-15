@@ -43,6 +43,11 @@ async function main(): Promise<void> {
     stats.status === 200 && Array.isArray(statsJson.byDay) && Array.isArray(statsJson.byVersion),
     `sessions=${statsJson.totals?.sessions} days=${statsJson.byDay?.length} versions=${statsJson.byVersion?.length}`,
   );
+  check(
+    "dash-stats buckets include pool slices",
+    typeof statsJson.totals?.buckets?.poolT1 === "number" && typeof statsJson.totals?.buckets?.poolT2 === "number",
+    `poolT1=${statsJson.totals?.buckets?.poolT1} poolT2=${statsJson.totals?.buckets?.poolT2}`,
+  );
 
   const badId = await api("/api/extract", { sessionId: "../../etc" });
   check("bad sessionId rejected", badId.status === 400, `status=${badId.status}`);

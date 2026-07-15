@@ -12,6 +12,7 @@
     --line:#e3e0d8;
     --accent:#0a6e3c;
     --ok:#008300; --caught:#c98500; --bad:#d03b3b;
+    --pool-t1:#0e7f6b; --pool-t2:#a05a00;
     --r-card:14px; --r-el:6px;
     --shadow:0 1px 4px rgba(0,0,0,.08);
   }
@@ -78,7 +79,9 @@
     <h2>Tier-1 outcome (completed sessions)</h2>
     <div class="legend">
       <span><i class="swatch" style="background:var(--ok)"></i>tier 1 correct</span>
+      <span><i class="swatch" style="background:var(--pool-t1)"></i>tier 1 near miss, pool fixed it</span>
       <span><i class="swatch" style="background:var(--caught)"></i>tier 1 wrong, tier 2 caught it</span>
+      <span><i class="swatch" style="background:var(--pool-t2)"></i>tier 2 near miss, pool fixed it</span>
       <span><i class="swatch" style="background:var(--bad)"></i>both wrong</span>
     </div>
     <h3>By day</h3>
@@ -100,9 +103,11 @@
     (an accepted code confirms the read; a rejected one counts the session red
     even if the user approved it — the wrong-crop-approved case). Sessions that
     never submitted fall back to the user's approved/manual final code, which
-    can't catch its own misreads. Days marked ° are sealed: served from the
-    cached summary, recomputed only if the cache is cleared. Client time
-    includes the human (shutter→verdict).</p>
+    can't catch its own misreads. Pool slices are rejected reads the server
+    resubmitted as the one known-valid code a single edit away — accepted, so
+    the session succeeded even though both readers missed. Days marked ° are
+    sealed: served from the cached summary, recomputed only if the cache is
+    cleared. Client time includes the human (shutter→verdict).</p>
 </main>
 
 <script>
@@ -135,9 +140,11 @@ function outcomeRow(key, sealed, a) {
   if (sealed) k.append(el("span", "sealed", " °"));
   const bar = el("div", "bar");
   const b = a.buckets;
-  const total = b.t1Correct + b.t1WrongT2Caught + b.bothWrong;
+  const poolT1 = b.poolT1 || 0;
+  const poolT2 = b.poolT2 || 0;
+  const total = b.t1Correct + poolT1 + b.t1WrongT2Caught + poolT2 + b.bothWrong;
   if (total) {
-    for (const [n, color] of [[b.t1Correct, "var(--ok)"], [b.t1WrongT2Caught, "var(--caught)"], [b.bothWrong, "var(--bad)"]]) {
+    for (const [n, color] of [[b.t1Correct, "var(--ok)"], [poolT1, "var(--pool-t1)"], [b.t1WrongT2Caught, "var(--caught)"], [poolT2, "var(--pool-t2)"], [b.bothWrong, "var(--bad)"]]) {
       if (!n) continue;
       const seg = el("i");
       seg.style.flexGrow = n;
@@ -149,11 +156,13 @@ function outcomeRow(key, sealed, a) {
   }
   const p = (n) => total ? ` (${Math.round((n / total) * 100)}%)` : "";
   row.title = `${key}: ${b.t1Correct}${p(b.t1Correct)} tier-1 delivered, `
+    + `${poolT1}${p(poolT1)} pool-corrected probe, `
     + `${b.t1WrongT2Caught}${p(b.t1WrongT2Caught)} caught by tier 2, `
+    + `${poolT2}${p(poolT2)} pool-corrected tier 2, `
     + `${b.bothWrong}${p(b.bothWrong)} both wrong (of ${a.completed} completed; ${a.abandoned} abandoned`
     + (a.manualSessions ? `; ${a.manualSessions} manual` : "") + `). `
     + `Tier-1 misses: ${b.t1WrongGateFail} gate-fail (no prefill), ${b.t1WrongGatePassed} wrong prefill.`;
-  const okN = b.t1Correct + b.t1WrongT2Caught;
+  const okN = b.t1Correct + poolT1 + b.t1WrongT2Caught + poolT2;
   const nd = el("span", "nd", total ? `${Math.round((okN / total) * 100)}% · ${okN}/${total} ✓` : "0 done");
   row.append(k, bar, nd);
   return row;

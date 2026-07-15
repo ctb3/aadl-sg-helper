@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { config } from "../core/config";
 import { dims } from "../core/image";
-import { AadlError, AuthExpiredError, connect, loadJar, submitCode } from "./aadl";
+import { AadlError, AuthExpiredError, connect, hiddenMessage, loadJar, submitCode } from "./aadl";
+import { listPool, poolCandidate, recordCode } from "./codes";
 import { dashStats } from "./dash";
 import { extractMode, storeImages } from "./flags";
 import { MANIFEST_JSON, icon, isIcon } from "./icons";
@@ -310,17 +311,44 @@ async function handleSubmit(body: Record<string, unknown>): Promise<unknown> {
   const accounts = parseAccounts(body);
 
   // Sequential on purpose: be gentle with aadl.org.
-  const results = [];
-  for (const acct of accounts) {
+  async function submitAll(c: string) {
+    const results = [];
+    for (const acct of accounts) {
+      try {
+        const r = await submitCode(loadJar(acct.cookies), c, acct.pids);
+        results.push({ label: acct.label, ...r });
+      } catch (err: any) {
+        results.push({
+          label: acct.label,
+          outcome: err instanceof AuthExpiredError ? ("auth_expired" as const) : ("error" as const),
+          error: String(err?.message ?? err),
+        });
+      }
+    }
+    return results;
+  }
+  const ok = (r: any): boolean => r.outcome === "success" || r.outcome === "already_redeemed";
+
+  const results = await submitAll(code);
+  const newAttempts: unknown[] = [{ at: new Date().toISOString(), code, results }];
+  let response = { code, results, correctedFrom: undefined as string | undefined };
+
+  // Pool correction: the oracle rejected the read outright — before giving up,
+  // resubmit the unique verified-pool code one edit away (recurring per-sign
+  // misreads: everyone's OCR trips on the same glyph). One hop max; a miss
+  // returns the original results so the client's escalate/manual flow runs
+  // unchanged. Any pool failure degrades to today's behavior.
+  const rejected = (r: any): boolean => r.outcome === "not_recognized" || r.outcome === "close_match";
+  if (!results.some(ok) && results.some(rejected) && config.poolCorrect !== "off") {
     try {
-      const r = await submitCode(loadJar(acct.cookies), code, acct.pids);
-      results.push({ label: acct.label, ...r });
-    } catch (err: any) {
-      results.push({
-        label: acct.label,
-        outcome: err instanceof AuthExpiredError ? ("auth_expired" as const) : ("error" as const),
-        error: String(err?.message ?? err),
-      });
+      const cand = poolCandidate(code, await listPool());
+      if (cand) {
+        const results2 = await submitAll(cand);
+        newAttempts.push({ at: new Date().toISOString(), code: cand, correctedFrom: code, results: results2 });
+        if (results2.some(ok)) response = { code: cand, results: results2, correctedFrom: code };
+      }
+    } catch (err) {
+      console.error("pool correction failed:", err);
     }
   }
 
@@ -333,10 +361,26 @@ async function handleSubmit(body: Record<string, unknown>): Promise<unknown> {
   } catch {
     // first attempt for this session
   }
-  attempts.push({ at: new Date().toISOString(), code, results });
-  await s3PutJson(key, { attempts });
+  attempts.push(...newAttempts);
 
-  return { code, results };
+  // Pool write: the accepted code is oracle-confirmed valid — remember it (and
+  // its creator's hidden message, when this was a fresh redeem). Overlapped
+  // with the submit.json PUT; must finish before the response (Lambda freezes),
+  // must never fail the submit.
+  const tail: Promise<unknown>[] = [s3PutJson(key, { attempts })];
+  if (response.results.some(ok)) {
+    tail.push(
+      recordCode(response.code, {
+        points: response.results.map((r: any) => r.points).find((p: any) => typeof p === "number"),
+        message: hiddenMessage(response.results.flatMap((r: any) => r.messages ?? [])),
+      }).catch((err) => console.error("pool write failed:", err)),
+    );
+  }
+  await Promise.all(tail);
+
+  return response.correctedFrom
+    ? { code: response.code, results: response.results, correctedFrom: response.correctedFrom }
+    : { code: response.code, results: response.results };
 }
 
 // ---------- server ----------

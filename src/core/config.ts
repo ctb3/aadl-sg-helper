@@ -69,6 +69,10 @@ export const config = {
   // Summer Game submission target; overridable for testing against a mirror.
   aadlBaseUrl: str("AADL_BASE_URL", "https://aadl.org"),
   sessionsBucket: str("SESSIONS_BUCKET", ""),
+  // Kill switch for pool correction (resubmitting a rejected code as the
+  // unique verified-pool code one edit away): "on" | "off". Env-only — the
+  // extra aadl.org round trip only happens on the already-slow rejected path.
+  poolCorrect: str("POOL_CORRECT", "on"),
   // PORT is the Lambda Web Adapter convention; also used locally.
   appPort: num("PORT", 8080),
 

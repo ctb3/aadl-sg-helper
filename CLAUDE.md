@@ -135,6 +135,30 @@ codes are redeemable — at sessions/_summary/v<ver>/<day>.json once the day is
 ≥2 Detroit days old (late resubmits mutate submit.json before that); open days
 compute fresh; whole payload memoized in-process 60s. Force recompute: delete
 the cache object or bump SCHEMA in dash.ts.
+Verified-code pool + pool correction (v1.3.0): every oracle-accepted submit
+(success OR already_redeemed) records sessions/_codes/<CODE>.json —
+{code, firstSeenAt, points?, message?}, message = the creator's hidden text
+(server twin of the client's hiddenMessage() lives in aadl.ts; upgrade-once:
+an already_redeemed-seeded entry gains its message when someone redeems
+fresh). Code-as-key ⇒ ListObjectsV2 alone loads the pool (no GETs; memoized
+60s, src/app/codes.ts); sessions/* IAM already covers the prefix — zero
+Terraform change. Correction (handleSubmit, src/app/server.ts): all accounts
+rejected (not_recognized/close_match) + read length ≥4 + read not itself
+pooled + EXACTLY ONE pool code at Levenshtein distance 1 → auto-resubmit that
+code (one hop max — a corrected miss returns the original results so client
+escalate/manual runs unchanged). Both attempts land in submit.json (corrected
+one carries correctedFrom); response code = corrected code; client shows it
+silently (no "corrected from" note — decision 2026-07-14) and re-posts the
+verdict (action pool_corrected, source preserved). POOL_CORRECT=off is the
+env kill switch (no AppConfig flag — correction is free, rejected-path only).
+Pool codes are LIVE REDEEMABLE SECRETS: viewing is admin-CLI only
+(`sessions-report --codes` — date/code/points/message), dash gets booleans
+only (poolT1/poolT2 outcome slices = pool-corrected probe/tier-2, SCHEMA 4).
+codes-backfill.ts seeds the pool from all historical submit.json (idempotent;
+--dry-run, --replay = offline matcher proof — 2026-07-14 prod replay
+would-correct 10 historical near misses incl. VOTEHSUMMER→VOTE4SUMMER,
+WERHSAKEN→WER4SAKEN, PB4UCO→PB4UGO, zero suspicious snaps; garbage short
+reads all skipped). Both buckets seeded 2026-07-14 (prod 119 codes, test 26).
 Manual entry (v1.2.4): home-screen "Type a code by hand" button jumps straight
 to v-manual — no photo, no extract.json; sessionId is prefetched on tap and
 resolved at submit (ensureSession). Source logs as `manual_direct` (photo-path

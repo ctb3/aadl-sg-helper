@@ -922,6 +922,7 @@ function openHandoff(code) {
 
 function finish(code, source) {
   try {
+    state.finalSource = source; // submitToAadl re-posts the verdict on a pool correction
     // Telemetry only — save it in the background, never block the user.
     api("/api/verdict", {
       sessionId: state.sessionId,
@@ -954,6 +955,7 @@ const OUTCOME_TEXT = {
 // The success message reads `[player] redeemed code "X" for 100 Summer Game
 // 2026 points. You found a Lawn Code on [road]! [creator's hidden message]` —
 // strip the boilerplate and surface whatever the code's creator wrote.
+// (Server twin: hiddenMessage() in aadl.ts — keep the regexes in sync.)
 function hiddenMessage(results) {
   for (const r of results) {
     for (const m of r.messages || []) {
@@ -978,6 +980,19 @@ async function submitToAadl(code) {
     accounts: accounts.map((a) => ({ cookies: a.cookies, pids: a.selectedPids, label: a.label })),
   });
   state.timings.submitMs = (state.timings.submitMs || 0) + (Date.now() - t);
+
+  // Pool correction (server-side): the read was rejected but sat one edit from
+  // a known-valid code, and the server's resubmit of that code was accepted —
+  // res.code is the corrected code. Show it as the final code (silently) and
+  // re-post the verdict so finalCode matches what was actually redeemed.
+  const finalCode = res.code && res.code !== code ? res.code : code;
+  if (finalCode !== code) {
+    state.verdicts.push({ tier: 0, code: finalCode, action: "pool_corrected" });
+    api("/api/verdict", {
+      sessionId: state.sessionId,
+      record: { verdicts: state.verdicts, finalCode, source: state.finalSource, clientMs: Date.now() - state.t0, timings: state.timings },
+    }).catch(() => {});
+  }
 
   const all = getAccounts();
   for (const r of res.results) {
@@ -1008,7 +1023,7 @@ async function submitToAadl(code) {
     return showManual(MSG.NOT_RECOGNIZED(code));
   }
 
-  $("s-code").textContent = code;
+  $("s-code").textContent = finalCode;
   const hidden = hiddenMessage(res.results);
   $("s-hidden").textContent = hidden;
   $("s-hidden").hidden = !hidden;

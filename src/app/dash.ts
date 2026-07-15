@@ -19,7 +19,7 @@ import { buildRow, bucket, collectIds, dayOf, getJson, listVersionPrefixes, pctl
  * codes are live redeemable secrets and the endpoint has no auth.
  */
 
-const SCHEMA = 3;
+const SCHEMA = 4;
 const MEMO_TTL_MS = 60_000;
 const MAX_DAYS = 60;
 
@@ -32,6 +32,7 @@ interface SessionStat {
   t2ran: boolean;
   t2ok: boolean | null; // null when t2 didn't run or abandoned
   t2how: "auto" | "escalated" | null;
+  corrected: boolean; // accepted attempt was a pool correction (correctedFrom)
   lat: { extractTotalMs?: number; gcvMs?: number; claudeMs?: number; clientMs?: number };
 }
 
@@ -62,10 +63,16 @@ interface Agg {
   /** counts over completed sessions. Delivery-based: t1Correct only when
    * tier 2 never ran (a gate-failed session whose GCV text happened to match
    * the final code is tier-2's win — the user never saw a tier-1 prefill).
-   * The last two split the t1-read-wrong cases. */
+   * poolT1/poolT2 are pool corrections (the accepted attempt carried
+   * correctedFrom) split by whether tier 2 had run — corrected sessions can't
+   * land in t1Correct/t1WrongT2Caught because the oracle truth is the
+   * corrected code, which neither read matched. The last two split the
+   * t1-read-wrong cases. */
   buckets: {
     t1Correct: number;
+    poolT1: number;
     t1WrongT2Caught: number;
+    poolT2: number;
     bothWrong: number;
     t1WrongGateFail: number;
     t1WrongGatePassed: number;
@@ -97,13 +104,21 @@ const isSealed = (day: string): boolean => day < dayOf(Date.now() - 24 * 3600 * 
  *   rejected → attempts exist and every decisive outcome is a misread signal
  *   null     → never submitted / nothing decisive: approval stands
  */
-function oracleOf(submits: any[]): { verdict: "accepted" | "rejected" | null; code: string | null } {
+function oracleOf(
+  submits: any[],
+): { verdict: "accepted" | "rejected" | null; code: string | null; corrected: boolean } {
   const ok = (x: any): boolean => x.outcome === "success" || x.outcome === "already_redeemed";
   const accepted = submits.find((a) => (a.results ?? []).some(ok));
-  if (accepted) return { verdict: "accepted", code: normalize(accepted.code ?? "") || null };
+  if (accepted) {
+    return {
+      verdict: "accepted",
+      code: normalize(accepted.code ?? "") || null,
+      corrected: !!accepted.correctedFrom,
+    };
+  }
   const rejected = submits.some((a) =>
     (a.results ?? []).some((x: any) => x.outcome === "not_recognized" || x.outcome === "close_match"));
-  return { verdict: rejected ? "rejected" : null, code: null };
+  return { verdict: rejected ? "rejected" : null, code: null, corrected: false };
 }
 
 function toStat(r: Row): SessionStat {
@@ -125,6 +140,7 @@ function toStat(r: Row): SessionStat {
     t2ran: r.t2code !== null,
     t2ok: truth !== null && r.t2code !== null ? !rejected && r.t2code === truth : null,
     t2how: r.t2How,
+    corrected: o.corrected,
     lat: lat,
   };
 }
@@ -140,7 +156,9 @@ function agg(stats: SessionStat[]): Agg {
   const done = ext.filter((s) => s.completed);
   const t1Wrong = done.filter((s) => s.t1ok === false);
   const t2Ran = done.filter((s) => s.t2ran);
-  // Disjoint by construction: t1Delivered requires !t2ran, t2Caught requires t2ran.
+  // Disjoint by construction: t1Delivered requires !t2ran, t2Caught requires
+  // t2ran, and corrected implies t1ok/t2ok are false (oracle truth is the
+  // corrected code) — the pool slices carve only out of bothWrong.
   const t1Delivered = (s: SessionStat): boolean => s.t1ok === true && !s.t2ran;
   const t2Caught = (s: SessionStat): boolean => s.t2ran && s.t2ok === true;
   const L = (k: keyof SessionStat["lat"]): number[] =>
@@ -155,8 +173,10 @@ function agg(stats: SessionStat[]): Agg {
     t2CorrectWhenRun: { n: t2Ran.filter((s) => s.t2ok === true).length, d: t2Ran.length },
     buckets: {
       t1Correct: done.filter(t1Delivered).length,
+      poolT1: done.filter((s) => s.corrected && !s.t2ran).length,
       t1WrongT2Caught: done.filter(t2Caught).length,
-      bothWrong: done.filter((s) => !t1Delivered(s) && !t2Caught(s)).length,
+      poolT2: done.filter((s) => s.corrected && s.t2ran).length,
+      bothWrong: done.filter((s) => !t1Delivered(s) && !t2Caught(s) && !s.corrected).length,
       t1WrongGateFail: t1Wrong.filter((s) => !s.gate).length,
       t1WrongGatePassed: t1Wrong.filter((s) => s.gate).length,
     },

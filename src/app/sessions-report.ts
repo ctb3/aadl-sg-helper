@@ -1,5 +1,6 @@
 import fs from "node:fs";
-import { ap, bucket, loadRows, listVersionPrefixes, pct, rate, Row, stats } from "./sessions";
+import { loadPoolEntries } from "./codes";
+import { ap, bucket, dayOf, loadRows, listVersionPrefixes, pct, rate, Row, stats } from "./sessions";
 
 /**
  * Field-session analysis: pulls every session under an S3 prefix and reports
@@ -8,6 +9,7 @@ import { ap, bucket, loadRows, listVersionPrefixes, pct, rate, Row, stats } from
  *
  *   npx tsx src/app/sessions-report.ts [prefix]     detailed, one version
  *   npx tsx src/app/sessions-report.ts --summary    cross-version rollup
+ *   npx tsx src/app/sessions-report.ts --codes      verified-code pool + hidden messages
  *
  * Default prefix = the current app version's folder (sessions/v<package.json
  * version>/); pass an explicit prefix for older batches. `--summary` instead
@@ -35,10 +37,12 @@ async function main(): Promise<void> {
     const ok = (code: string | null): string =>
       code === null || r.manual ? "-" : r.truth === null ? code : `${code}${code === r.truth ? " ✓" : " ✗"}`;
     const lastSubmit = r.submits.at(-1);
+    const corr = r.submits.find((a: any) => a.correctedFrom);
     const notes = [
       r.manual ? "manual" : (r.usedLine ? "" : "no-line"),
       r.truth === null ? "ABANDONED" : "",
       r.t2How === "auto" ? "auto-t2" : "",
+      corr ? `corr←${corr.correctedFrom}` : "",
       lastSubmit ? `sub:${[...new Set(lastSubmit.results.map((x: any) => x.outcome))].join("/")}` : "",
     ].filter(Boolean).join(" ");
     console.log(
@@ -95,6 +99,9 @@ async function main(): Promise<void> {
     console.log(`outcomes (all attempts):   ${[...outcomes].map(([k, v]) => `${k}=${v}`).join("  ")}`);
     console.log(`rejected on first try:     ${pct(firstRejected.length, withSubmits.length)}  <- oracle-caught misreads`);
     if (firstRejected.length) console.log(`recovered after rejection: ${pct(recovered.length, firstRejected.length)}`);
+    const poolFixed = withSubmits.filter((r) =>
+      r.submits.some((a: any) => a.correctedFrom && a.results.some((x: any) => x.outcome === "success" || x.outcome === "already_redeemed")));
+    if (firstRejected.length) console.log(`pool-corrected:            ${pct(poolFixed.length, firstRejected.length)}`);
     const subLat = withSubmits.flatMap((r) => r.submits.flatMap((a: any) => a.results.map((x: any) => x.latencyMs))).filter((x: any) => typeof x === "number");
     console.log(`submit latency:            ${stats(subLat)}`);
   }
@@ -236,7 +243,27 @@ async function summary(): Promise<void> {
   }
 }
 
-const run = process.argv.includes("--summary") ? summary : main;
+// The verified-code pool (sessions/_codes/): every oracle-confirmed code with
+// its creator's hidden message. This CLI is the ONLY place pool codes print —
+// they're live redeemable secrets, never exposed on the public app/dash.
+async function codes(): Promise<void> {
+  if (!bucket) throw new Error("SESSIONS_BUCKET not set");
+  const entries = await loadPoolEntries();
+  entries.sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt));
+  console.log(`\n${entries.length} verified code(s) under s3://${bucket}/sessions/_codes/\n`);
+  console.log("first seen".padEnd(12) + "code".padEnd(16) + "pts".padEnd(5) + "hidden message");
+  for (const e of entries) {
+    console.log(
+      dayOf(Date.parse(e.firstSeenAt)).padEnd(12) +
+      e.code.padEnd(16) +
+      `${e.points ?? "-"}`.padEnd(5) +
+      (e.message ?? ""),
+    );
+  }
+}
+
+const run = process.argv.includes("--summary") ? summary
+  : process.argv.includes("--codes") ? codes : main;
 run().catch((err) => {
   console.error(err);
   process.exit(1);

@@ -281,6 +281,24 @@ export interface SubmitMessage {
   text: string;
 }
 
+/**
+ * The success message reads `[player] redeemed code "X" for 100 Summer Game
+ * 2026 points. You found a Lawn Code on [road]! [creator's hidden message]` —
+ * strip the boilerplate and surface whatever the code's creator wrote.
+ * (Client twin: hiddenMessage() in public/index.html — keep the regexes in sync.)
+ */
+export function hiddenMessage(messages: SubmitMessage[]): string {
+  for (const m of messages) {
+    if (m.outcome !== "success") continue;
+    const rest = m.text
+      .replace(/^.*?redeemed code "[A-Z0-9]+" for -?\d+[^.!]*[.!]\s*/i, "")
+      .replace(/^You found an? [\w' -]{0,40}Code (on|at|in|near) [^.!?]*[.!?]\s*/i, "")
+      .trim();
+    if (rest) return rest;
+  }
+  return "";
+}
+
 export interface SubmitResult {
   outcome: SubmitOutcome;
   /** Points from the first success message, when present. */

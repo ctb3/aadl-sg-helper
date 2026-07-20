@@ -250,6 +250,16 @@ manual prefilled** = 97.4% end-to-end, <$0.003/img avg, 87% instant (0.4s).
   surviving subtraction and outranking the code at 0.89-0.94 conf, prod ×2)
   is FIXED: any line whose tokens are all headline vocab is printed
   (HEADLINE_WORDS in postproc.ts). Scene text itself is still open.
+- Repeated-word codes: the ring-repeat heuristic (same token 3+ per line,
+  added for upside-down ring misreads "held 610 pee held…") ate
+  "ZOOM ZOOM ZOOM" (prod 2026-07-19, 5/5 sessions all-garbage cascade — wrong
+  line, wrong crop, wrong tier 2). Fixed v1.3.1: repeat rule is height-anchored
+  (makeDropLine in postproc.ts) — only drops repeat lines ≤1.5× median
+  printed-line height (ring text is body-copy-sized ~0.01, handwriting
+  0.03-0.075). Offline replay: 67-image corpus zero picks changed (the repeat
+  rule fires on NO corpus image — other rules catch ring text there); all 5
+  prod sessions recover to ZOOMZOOMZOOM. Accepted blind spot: a repeated-word
+  code written body-copy-small still gets subtracted.
 - Prompt-hardening that worked (in-sample): doodles-aren't-letters, ignore
   ghost strokes of cleaned-off codes, resolve ambiguous glyphs by the writer's
   own letterforms. Caveat everywhere: n=39, thresholds tuned while looking.
@@ -305,9 +315,13 @@ episode, 17 fresh):
 
 ## Environment (WSL + Windows)
 
-- `npm`/`npx tsx` run **Windows** node (`node` isn't on WSL PATH). Paths in
-  output are `C:\...`. WSL `curl` cannot reach Windows-node localhost ports;
-  test servers from the Windows browser.
+- DRIFTED 2026-07-19: `npm`/`npx` now resolve to **WSL** node (/usr/bin/node,
+  v22) and node_modules carries Linux binaries (esbuild) — running npm via
+  cmd.exe/Windows node now fails on the binary mismatch. Consequence: the
+  Windows-path GOOGLE_APPLICATION_CREDENTIALS in .env breaks GCV under WSL —
+  prefix runs with GOOGLE_APPLICATION_CREDENTIALS=/mnt/c/Users/Carl/keys/….json
+  (preflight's GCV ✗ is this, not a real outage). WSL `curl` still can't reach
+  Windows-node localhost ports; test servers from the Windows browser.
 - Orphaned listeners (e.g. labeler on :5178): find via `netstat.exe -ano |
   grep :5178`, verify+kill via `powershell.exe -Command "Stop-Process -Id <pid>
   -Force"`. Stopping the WSL background task does not kill the Windows process.

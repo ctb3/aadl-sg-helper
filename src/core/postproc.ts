@@ -159,8 +159,25 @@ export function isPrintedLine(text: string): boolean {
   const headlineToks = text.toUpperCase().split(/\s+/).map(alnum).filter(Boolean);
   if (headlineToks.length && headlineToks.every((t) => HEADLINE_WORDS.has(t))) return true;
 
-  // Upside-down ring text misreads repeat the same token ("held 6101pee held
-  // 6101pee held…"). Repeating the same token 3+ times is ring text, not a code.
+  for (const p of SIGN_PHRASES) {
+    if (sim(a, p) >= PHRASE_SIM_THRESHOLD) return true;
+    // OCR often splits a phrase across lines; fragments of known copy are
+    // printed too (min length 3 to avoid nuking short codes by accident).
+    if (a.length >= 3 && p.includes(a)) return true;
+  }
+  return false;
+}
+
+/**
+ * Upside-down ring text misreads repeat the same token ("held 6101pee held
+ * 6101pee held…"). Repeating the same token 3+ times is ring text — UNLESS the
+ * line is handwriting-sized: a legit code can be a repeated word too
+ * ("ZOOM ZOOM ZOOM", prod 2026-07-19), and text alone can't tell them apart.
+ * Height can: ring text is body-copy-sized, so this check only applies to
+ * lines ≤ RING_REPEAT_MAX_H_RATIO × the median printed-line height (see
+ * dropLine below).
+ */
+export function isRepeatedTokenLine(text: string): boolean {
   const tokens = text
     .toUpperCase()
     .split(/\s+/)
@@ -172,14 +189,27 @@ export function isPrintedLine(text: string): boolean {
     if (n >= 3) return true;
     counts.set(t, n);
   }
-
-  for (const p of SIGN_PHRASES) {
-    if (sim(a, p) >= PHRASE_SIM_THRESHOLD) return true;
-    // OCR often splits a phrase across lines; fragments of known copy are
-    // printed too (min length 3 to avoid nuking short codes by accident).
-    if (a.length >= 3 && p.includes(a)) return true;
-  }
   return false;
+}
+
+const RING_REPEAT_MAX_H_RATIO = 1.5;
+
+/**
+ * Per-photo drop predicate for the subtraction strategies: printed sign copy,
+ * plus repeated-token ring text when the line is body-copy-sized. With no
+ * printed lines to anchor the height comparison, fall back to treating any
+ * repeated-token line as ring text (the pre-height behavior).
+ */
+export function makeDropLine(lines: Line[]): (l: Line) => boolean {
+  const printedHs = lines
+    .filter((l) => isPrintedLine(l.text))
+    .map((l) => l.h)
+    .sort((a, b) => a - b);
+  const medPrintedH = printedHs.length ? printedHs[Math.floor(printedHs.length / 2)] : null;
+  return (l) =>
+    isPrintedLine(l.text) ||
+    (isRepeatedTokenLine(l.text) &&
+      (medPrintedH === null || l.h <= RING_REPEAT_MAX_H_RATIO * medPrintedH));
 }
 
 function pick(lines: Line[]): StrategyResult {
@@ -199,15 +229,15 @@ export function tallestLine(lines: Line[]): StrategyResult {
 
 /** Subtract known printed copy, keep everything else (top-to-bottom). */
 export function phraseSubtract(lines: Line[]): StrategyResult {
-  const kept = lines
-    .filter((l) => !isPrintedLine(l.text))
-    .sort((a, b) => a.cy - b.cy);
+  const drop = makeDropLine(lines);
+  const kept = lines.filter((l) => !drop(l)).sort((a, b) => a.cy - b.cy);
   return pick(kept);
 }
 
 /** Subtract known printed copy, then take the tallest survivor. */
 export function combined(lines: Line[]): StrategyResult {
-  return tallestLine(lines.filter((l) => !isPrintedLine(l.text)));
+  const drop = makeDropLine(lines);
+  return tallestLine(lines.filter((l) => !drop(l)));
 }
 
 // ---------- reader adapters: cached raw response → Line[] ----------
@@ -256,7 +286,8 @@ export function textractLines(blocks: any[]): Line[] {
 
 /** The Line the combined strategy would pick (for crop geometry), or null. */
 export function combinedLine(lines: Line[]): Line | null {
-  const survivors = lines.filter((l) => !isPrintedLine(l.text) && alnum(l.text).length > 0);
+  const drop = makeDropLine(lines);
+  const survivors = lines.filter((l) => !drop(l) && alnum(l.text).length > 0);
   if (survivors.length === 0) return null;
   return survivors.reduce((a, b) => (b.h > a.h ? b : a));
 }
